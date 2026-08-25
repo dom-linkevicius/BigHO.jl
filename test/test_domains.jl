@@ -5,12 +5,6 @@
     @test c isa Domain
     @test c.min == 1.0
     @test c.max == 5.0
-    @test c.log == false
-
-    clog = Continuous(1e-4, 1e2; log=true)
-    @test clog.log == true
-    @test clog.min == 1e-4
-    @test clog.max == 1e2
 
     o = Ordinal(4)
     @test o isa Domain
@@ -26,20 +20,12 @@
     @testset "rand" begin
         rng = StableRNG(1)
 
-        # Continuous: draws fall within [min, max], both with and without `log`.
+        # Continuous: draws fall within [min, max].
         @test all(1:1000) do _
             v = rand(rng, c)
             1.0 <= v <= 5.0
         end
-        @test all(1:1000) do _
-            v = rand(rng, clog)
-            1e-4 <= v <= 1e2
-        end
         @test rand(c) isa Float64 # no explicit rng also works
-
-        # log=true requires a strictly positive lower bound.
-        @test_throws ArgumentError rand(rng, Continuous(-1, 5; log=true))
-        @test_throws ArgumentError rand(rng, Continuous(0, 5; log=true))
 
         # Ordinal/Categorical: draws are level indices in 1:levels.
         @test all(rand(rng, o) in 1:4 for _ in 1:1000)

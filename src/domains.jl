@@ -12,35 +12,22 @@ vector's element type.
 abstract type Domain end
 
 """
-    Continuous(min, max; log=false)
+    Continuous(min, max)
 
-A continuous real-valued dimension bounded by `[min, max]`. `log` marks the
-dimension as naturally log-uniform (e.g. a learning rate spanning several
-orders of magnitude), which downstream samplers/KDEs can use to sample or
-estimate density in log-space instead of linear space.
+A continuous real-valued dimension bounded by `[min, max]`.
 """
 struct Continuous <: Domain
     min::Float64
     max::Float64
-    log::Bool
 end
-Continuous(min::Real, max::Real; log::Bool=false) = Continuous(Float64(min), Float64(max), log)
+Continuous(min::Real, max::Real) = Continuous(Float64(min), Float64(max))
 
 """
     rand([rng,] d::Continuous) -> Float64
 
-Draw a value uniformly from `[d.min, d.max]`, or, if `d.log`, uniformly in
-log-space (equivalent to a log-uniform/"reciprocal" distribution over the
-range) -- requires `d.min > 0`.
+Draw a value uniformly from `[d.min, d.max]`.
 """
-function Base.rand(rng::Random.AbstractRNG, d::Continuous)
-    if d.log
-        d.min > 0 || throw(ArgumentError("Continuous domain with log=true requires min > 0, got min=$(d.min)"))
-        lo, hi = log(d.min), log(d.max)
-        return exp(lo + rand(rng) * (hi - lo))
-    end
-    return d.min + rand(rng) * (d.max - d.min)
-end
+Base.rand(rng::Random.AbstractRNG, d::Continuous) = d.min + rand(rng) * (d.max - d.min)
 Base.rand(d::Continuous) = rand(Random.default_rng(), d)
 
 """
