@@ -9,6 +9,7 @@ export Domain, Continuous, Ordinal, Categorical
 
 using Random
 using Printf
+using StableRNGs: StableRNG
 
 include("domains.jl")
 include("samplers/sampler.jl")

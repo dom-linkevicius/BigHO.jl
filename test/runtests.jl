@@ -1,4 +1,5 @@
 using Test, Random
+using StableRNGs: StableRNG
 using Hyperopt
 
 @testset "Hyperopt" begin
