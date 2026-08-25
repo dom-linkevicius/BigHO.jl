@@ -10,7 +10,6 @@ mutable struct Hyperoptimizer{S<:Sampler,F}
     n_pending::Int
     done::Bool
     best_min_id::Union{Int,Nothing}
-    best_max_id::Union{Int,Nothing}
     lock::ReentrantLock
 end
 
@@ -20,18 +19,32 @@ end
 Construct an ask-tell hyperparameter optimizer. `candidates` gives one entry per
 parameter name; `objective` is called as `objective(params...)` (no macro, no
 iteration-index argument). `n`, if given, bounds the total number of trials.
+
+Hyperopt only ever minimizes `objective` — to maximize, minimize `-objective(...)`.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     params = collect(Symbol, keys(candidates))
     cands = values(candidates)
     ho = Hyperoptimizer(params, cands, sampler, objective, n,
                          Trial[], Union{Result,Nothing}[], Int[], 0, false,
-                         nothing, nothing, ReentrantLock())
+                         nothing, ReentrantLock())
     init!(sampler, AskContext(cands, 0, n))
     return ho
 end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.trials) >= ho.n
+
+"""
+    settarget!(ho, n)
+
+Set the planned total number of trials (`nothing` for unbounded). This is how
+you resume a run: raise the target and call `run!(ho)` again -- there is no
+other special "resume" feature, since all state already lives in `ho`.
+"""
+function settarget!(ho::Hyperoptimizer, n::Union{Int,Nothing})
+    ho.n = n
+    return ho
+end
 
 """
     ask(ho) -> Trial
@@ -55,14 +68,10 @@ function ask(ho::Hyperoptimizer)
 end
 
 _rank_min(v) = (v isa Real && isnan(v)) ? Inf : v
-_rank_max(v) = (v isa Real && isnan(v)) ? -Inf : v
 
 function update_best!(ho::Hyperoptimizer, trial::Trial, result::Result)
     if ho.best_min_id === nothing || _rank_min(result.value) < _rank_min(ho.results[ho.best_min_id].value)
         ho.best_min_id = trial.id
-    end
-    if ho.best_max_id === nothing || _rank_max(result.value) > _rank_max(ho.results[ho.best_max_id].value)
-        ho.best_max_id = trial.id
     end
     return ho
 end
@@ -98,8 +107,8 @@ sampler is exhausted, or the run is interrupted), dispatching evaluations
 through `executor`. Swapping `executor` requires no change to `ho.sampler`
 or `ho.objective`.
 
-Resuming a previous run is not a special feature: raise `ho.n` (or leave it
-`nothing`) and call `run!` again on the same object.
+Resuming a previous run is not a special feature: call `settarget!(ho, n)` (or
+leave the target `nothing`) and call `run!` again on the same object.
 """
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     start!(executor, ho)

@@ -22,7 +22,5 @@
     # With zero completed runs (only `ask`, never `tell!`), the optimum accessors
     # must not silently return a sentinel -- they throw instead.
     @test_throws ErrorException minimum(ho2)
-    @test_throws ErrorException maximum(ho2)
     @test_throws ErrorException minimizer(ho2)
-    @test_throws ErrorException maximizer(ho2)
 end
