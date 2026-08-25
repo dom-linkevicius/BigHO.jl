@@ -19,10 +19,13 @@
 
     # Resuming a run is just raising the target via `settarget!` and calling
     # `run!` again -- no special macro/capture mechanism, state already lives in `hor`.
-    settarget!(hor, 102)
+    @test_logs (:info, r"target set to 102") settarget!(hor, 102)
     run!(hor)
     @test length(history(hor)) == 102
     @test length(results(hor)) == 102
+
+    # settarget! can only raise the target, never lower it.
+    @test_throws ArgumentError settarget!(hor, 50)
 
     # Test NaN handling: NaN is a legitimate objective value, distinct from a failure.
     let n_calls = Ref(0)

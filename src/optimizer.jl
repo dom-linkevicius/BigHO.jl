@@ -37,12 +37,22 @@ reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.trials) >= ho
 """
     settarget!(ho, n)
 
-Set the planned total number of trials (`nothing` for unbounded). This is how
-you resume a run: raise the target and call `run!(ho)` again -- there is no
-other special "resume" feature, since all state already lives in `ho`.
+Raise the planned total number of trials to `n`. This is how you resume a
+run: call `settarget!(ho, n)` with a larger `n` and call `run!(ho)` again --
+there is no other special "resume" feature, since all state already lives in
+`ho`.
+
+Only raising the target is supported: samplers may size internal state off
+`ho.n` (e.g. a Latin hypercube design matrix built for exactly `n` rows), so
+lowering it after trials have already been planned against the old target is
+not allowed and throws `ArgumentError`.
 """
-function settarget!(ho::Hyperoptimizer, n::Union{Int,Nothing})
+function settarget!(ho::Hyperoptimizer, n::Int)
+    if ho.n !== nothing && n < ho.n
+        throw(ArgumentError("settarget!: new target ($n) is less than the current target ($(ho.n)) -- settarget! can only raise the target"))
+    end
     ho.n = n
+    @info "Hyperoptimizer target set to $(ho.n) trials"
     return ho
 end
 
