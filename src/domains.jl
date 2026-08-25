@@ -2,73 +2,159 @@
     Domain
 
 Describes *what kind* of variable a hyperparameter is, independent of any
-particular sampling algorithm or candidate vector -- continuous, ordinal
-(ordered discrete), or categorical (unordered/nominal discrete). This is
-metadata, not a sampler: it exists so later machinery (Latin hypercube design,
-BOHB's kernel density estimates) knows which kernel/distance to use for a
-given dimension without having to reverse-engineer it from a candidate
-vector's element type.
+particular sampling algorithm or candidate vector -- ordinal (ordered
+discrete, including continuous ranges discretized at some resolution) or
+categorical (unordered/nominal discrete). This is metadata, not a sampler: it
+exists so later machinery (Latin hypercube design, BOHB's kernel density
+estimates) knows which kernel/distance to use for a given dimension without
+having to reverse-engineer it from a candidate vector's element type.
 """
 abstract type Domain end
 
 """
-    Continuous(min, max)
+    Ordinal <: Domain
 
-A continuous real-valued dimension bounded by `[min, max]`.
+Any domain with an inherent order, represented internally as `n` discretized,
+weightable positions `1:n` -- a plain enumerated ordinal ([`Levels`](@ref)) or
+a continuous range discretized at some resolution ([`Continuous`](@ref)).
+Sharing this representation is deliberate: later machinery (e.g. BOHB
+updating sampling weights from a fitted KDE) can be written once against
+`Ordinal` and apply to both.
 """
-struct Continuous <: Domain
+abstract type Ordinal <: Domain end
+
+"""
+Shared default RNG for `rand(d::Domain)` calls with no explicit `rng`
+argument. A persistent `StableRNG` (not `Random.default_rng()`), for the same
+reason `RandomSampler()` defaults to `StableRNG` rather than
+`MersenneTwister`: a reproducible, version-stable stream rather than
+whatever Julia's global RNG happens to be. It's a single shared, mutating
+instance (unlike `RandomSampler`, which gets its own fresh `StableRNG(1)` per
+instance) because repeated `rand(d)` calls need to actually advance -- there
+is no per-call object to hold that state in.
+"""
+const DEFAULT_DOMAIN_RNG = StableRNG(1)
+
+_check_weights(levels::Int, weights::Nothing) = nothing
+function _check_weights(levels::Int, weights::Vector{Float64})
+    length(weights) == levels || throw(ArgumentError("weights must have length $levels (one per level), got $(length(weights))"))
+    return nothing
+end
+
+# Shared sampling mechanics for any domain with `nlevels(d)` discretized
+# positions `1:n` and an optional `d.weights` over them (`nothing` => uniform).
+# `nlevels` methods for each concrete type are defined alongside that type,
+# below, since they need the struct to already exist.
+nlevels(d::Ordinal) = d.levels
+
+function _sample_level(rng::Random.AbstractRNG, d::Domain)
+    n = nlevels(d)
+    return d.weights === nothing ? rand(rng, 1:n) : sample(rng, 1:n, Weights(d.weights))
+end
+
+"""
+    Levels(levels; weights=nothing)
+
+A plain enumerated ordinal dimension with `levels` distinct values that have
+a meaningful order (e.g. "low" < "medium" < "high") even though the values
+themselves need not be numeric.
+
+By default (`weights=nothing`), `rand` draws a level index uniformly from
+`1:levels`; pass `weights` (a `Vector{Float64}` of length `levels`) to draw
+non-uniformly instead.
+"""
+struct Levels <: Ordinal
+    levels::Int
+    weights::Union{Vector{Float64},Nothing}
+end
+function Levels(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing)
+    _check_weights(levels, weights)
+    return Levels(levels, weights)
+end
+
+"""
+    rand([rng,] d::Levels) -> Int
+
+Draw a level index from `1:d.levels`, uniformly unless `d.weights` was given.
+`Levels` describes the *kind* of dimension, not the actual candidate values,
+so a draw is an index into whatever ordered candidate list this dimension is
+paired with elsewhere.
+"""
+Base.rand(rng::Random.AbstractRNG, d::Levels) = _sample_level(rng, d)
+Base.rand(d::Levels) = rand(DEFAULT_DOMAIN_RNG, d)
+
+"""
+    Continuous(min, max, dt; weights=nothing)
+
+A continuous real-valued dimension bounded by `[min, max]`, discretized into
+a grid of points spaced `dt` apart starting at `min` (`dt` is the distance
+between neighboring points, not a point count -- the number of points,
+`floor((max-min)/dt)+1`, is derived). If `(max-min)` isn't an exact multiple
+of `dt`, the last grid point falls short of `max` rather than overshooting it.
+
+By default (`weights=nothing`), `rand` draws a grid point uniformly; pass
+`weights` (a `Vector{Float64}`, one per grid point) to draw non-uniformly
+instead -- this is the hook later machinery (e.g. BOHB) uses to bias sampling
+towards promising regions after fitting a density estimate.
+"""
+struct Continuous <: Ordinal
     min::Float64
     max::Float64
+    dt::Float64
+    weights::Union{Vector{Float64},Nothing}
 end
-Continuous(min::Real, max::Real) = Continuous(Float64(min), Float64(max))
+function Continuous(min::Real, max::Real, dt::Real; weights::Union{Vector{Float64},Nothing}=nothing)
+    min, max, dt = Float64(min), Float64(max), Float64(dt)
+    max >= min || throw(ArgumentError("max ($max) must be >= min ($min)"))
+    dt > 0 || throw(ArgumentError("dt must be > 0, got $dt"))
+    _check_weights(floor(Int, (max - min) / dt) + 1, weights)
+    return Continuous(min, max, dt, weights)
+end
+
+nlevels(d::Continuous) = floor(Int, (d.max - d.min) / d.dt) + 1
 
 """
     rand([rng,] d::Continuous) -> Float64
 
-Draw a value uniformly from `[d.min, d.max]`.
+Draw a grid point from `d`'s discretization, uniformly unless `d.weights`
+was given.
 """
-Base.rand(rng::Random.AbstractRNG, d::Continuous) = d.min + rand(rng) * (d.max - d.min)
-Base.rand(d::Continuous) = rand(Random.default_rng(), d)
-
-"""
-    Ordinal(levels)
-
-A discrete dimension with `levels` distinct values that have a meaningful
-order (e.g. "low" < "medium" < "high", or an integer count) even though the
-values themselves need not be numeric. Order matters for distance-based
-methods (Latin hypercube design, ordinal KDE kernels).
-"""
-struct Ordinal <: Domain
-    levels::Int
+function Base.rand(rng::Random.AbstractRNG, d::Continuous)
+    idx = _sample_level(rng, d)
+    return d.min + (idx - 1) * d.dt
 end
+Base.rand(d::Continuous) = rand(DEFAULT_DOMAIN_RNG, d)
 
 """
-    rand([rng,] d::Ordinal) -> Int
-
-Draw a level index uniformly from `1:d.levels`. `Ordinal` describes the
-*kind* of dimension, not the actual candidate values, so a draw is an index
-into whatever ordered candidate list this dimension is paired with elsewhere.
-"""
-Base.rand(rng::Random.AbstractRNG, d::Ordinal) = rand(rng, 1:d.levels)
-Base.rand(d::Ordinal) = rand(Random.default_rng(), d)
-
-"""
-    Categorical(levels)
+    Categorical(levels; weights=nothing)
 
 A discrete dimension with `levels` distinct nominal values that have no
 meaningful order (e.g. a choice of activation function). Any two distinct
-levels must be treated as equally "different" by design/KDE methods.
+levels must be treated as equally "different" by design/KDE methods -- unlike
+[`Ordinal`](@ref), this is not part of that hierarchy.
+
+By default (`weights=nothing`), `rand` draws a level index uniformly from
+`1:levels`; pass `weights` (a `Vector{Float64}` of length `levels`) to draw
+non-uniformly instead.
 """
 struct Categorical <: Domain
     levels::Int
+    weights::Union{Vector{Float64},Nothing}
 end
+function Categorical(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing)
+    _check_weights(levels, weights)
+    return Categorical(levels, weights)
+end
+
+nlevels(d::Categorical) = d.levels
 
 """
     rand([rng,] d::Categorical) -> Int
 
-Draw a level index uniformly from `1:d.levels`. `Categorical` describes the
-*kind* of dimension, not the actual candidate values, so a draw is an index
-into whatever nominal candidate list this dimension is paired with elsewhere.
+Draw a level index from `1:d.levels`, uniformly unless `d.weights` was
+given. `Categorical` describes the *kind* of dimension, not the actual
+candidate values, so a draw is an index into whatever nominal candidate list
+this dimension is paired with elsewhere.
 """
-Base.rand(rng::Random.AbstractRNG, d::Categorical) = rand(rng, 1:d.levels)
-Base.rand(d::Categorical) = rand(Random.default_rng(), d)
+Base.rand(rng::Random.AbstractRNG, d::Categorical) = _sample_level(rng, d)
+Base.rand(d::Categorical) = rand(DEFAULT_DOMAIN_RNG, d)

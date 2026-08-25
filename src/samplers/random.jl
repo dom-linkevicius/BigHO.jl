@@ -13,8 +13,8 @@ call the sampler themselves.
 `RandomSampler()` defaults to a `StableRNG` (guaranteed reproducible across
 Julia versions, unlike `Random.MersenneTwister`) seeded with a fixed seed of
 `1` — reproducible by default, no hidden randomness. If you want a different
-seed, or genuinely non-reproducible runs, pass your own RNG explicitly, e.g.
-`RandomSampler(StableRNG(42))` or `RandomSampler(Random.default_rng())`.
+seed, pass `RandomSampler(StableRNG(42))`; for genuinely non-reproducible
+runs, pass any other `AbstractRNG` explicitly, e.g. `RandomSampler(Random.Xoshiro())`.
 """
 mutable struct RandomSampler{T<:Random.AbstractRNG} <: Sampler
     rng::T
