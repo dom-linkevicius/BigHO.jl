@@ -6,7 +6,7 @@
     hor = Hyperoptimizer((a, b, c) -> f(a, b, c=c),
                           (a=Continuous(1, 5, 4 / 49),                    # 50 evenly spaced points
                            b=Nominal([true, false]),
-                           c=Ordinal(exp10.(LinRange(-1, 3, 50))));        # log-spaced, monotonically increasing -> non-uniform grid, so Ordinal not Continuous
+                           c=Ordinal(exp10.(LinRange(-1, 3, 50))));        # log-spaced -- Ordinal here works just as well as Continuous(values) would
                           n=100)
     run!(hor)
     show(devnull, hor)

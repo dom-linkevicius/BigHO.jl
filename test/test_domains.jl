@@ -12,26 +12,79 @@
 
     nom = Nominal(4)
     @test nom isa Domain
-    @test Hyperopt.nlevels(nom) == 4
+    @test length(nom.values) == 4
 
     ord = Ordinal(3)
     @test ord isa Domain
-    @test Hyperopt.nlevels(ord) == 3
+    @test length(ord.values) == 3
 
     c = Continuous(1, 5, 1) # dt=1 -> grid points 1,2,3,4,5
     @test c isa Domain
     @test first(c.values) == 1.0
     @test last(c.values) == 5.0
     @test step(c.values) == 1.0
-    @test Hyperopt.nlevels(c) == 5
+    @test length(c.values) == 5
 
     # dt need not evenly divide (max-min): the grid stops at or before max, never past it.
     cshort = Continuous(0, 1, 0.3) # points at 0, 0.3, 0.6, 0.9 -- last point (0.9) falls short of 1.0
-    @test Hyperopt.nlevels(cshort) == 4
+    @test length(cshort.values) == 4
 
     @test_throws ArgumentError Continuous(1, 5, 0)   # dt must be > 0
     @test_throws ArgumentError Continuous(1, 5, -1)
     @test_throws ArgumentError Continuous(5, 1, 1)   # max must be >= min
+
+    @testset "Continuous from values" begin
+        # Equivalent to Continuous(1, 5, 1) -- built from an explicit,
+        # increasing sequence instead of (min, max, dt). == compares by
+        # value, not concrete container type, so a Vector-backed and a
+        # range-backed Continuous with the same points compare equal.
+        c_vals = Continuous(1:1:5)
+        @test c_vals isa Domain
+        @test c_vals.type == :continuous
+        @test c_vals.values == c.values
+
+        # A plain, evenly-spaced Vector works too, not just a range.
+        c_vec = Continuous([1.0, 1.5, 2.0, 2.5, 3.0])
+        @test first(c_vec.values) == 1.0
+        @test last(c_vec.values) == 3.0
+        @test length(c_vec.values) == 5
+
+        # Continuous does NOT require even spacing -- unlike the (min, max,
+        # dt) form (which always produces a uniform grid by construction),
+        # the values form accepts any increasing sequence, e.g. log-spaced.
+        # What distinguishes Continuous from Ordinal is the :continuous tag
+        # itself (relevant to future density-estimation machinery), not grid
+        # uniformity.
+        logspaced = Continuous(exp10.(LinRange(-1, 3, 50)))
+        @test logspaced isa Domain
+        @test logspaced.type == :continuous
+        @test length(logspaced.values) == 50
+        @test all(rand(StableRNG(1), logspaced) in logspaced for _ in 1:200)
+        @test logspaced.values[1] in logspaced
+        @test logspaced.values[end] in logspaced
+        @test (first(logspaced.values) - 1) ∉ logspaced # below the range
+        @test (last(logspaced.values) + 1) ∉ logspaced  # above the range
+        @test 1.0 ∉ logspaced # inside [min,max] but not one of the 50 log-spaced points
+
+        # Duplicate values are rejected -- issorted alone allows equal
+        # neighbors (issorted([1, 1, 2, 3]) is true), so allunique is
+        # checked too, requiring strictly increasing values.
+        @test_throws ArgumentError Continuous([1.0, 1.0, 2.0])
+
+        # A single value is a valid (degenerate, 1-point) Continuous, same as
+        # Continuous(5, 5, 1) already is via the (min, max, dt) form.
+        @test length(Continuous([5.0]).values) == 1
+
+        # Descending values are rejected, same as dt <= 0 is for the
+        # (min, max, dt) form.
+        @test_throws ArgumentError Continuous([5.0, 4.0, 3.0])
+
+        # weights works identically to the (min, max, dt) form.
+        c_vals_w = Continuous(1:1:5; weights=[0.0, 0.0, 0.0, 0.0, 1.0])
+        rng = StableRNG(1)
+        @test all(rand(rng, c_vals_w) == 5.0 for _ in 1:200)
+        @test_throws ArgumentError Continuous(1:1:5; weights=[1.0, 2.0])
+    end
 
     @testset "Ordinal order checking" begin
         # Numeric values: order is verifiable, so it's actually enforced.
@@ -107,7 +160,7 @@
         # though naive floating-point division of (0.3-0.0)/0.1 comes out
         # just under 3.0. A weights vector must match that true count.
         c_dec = Continuous(0.0, 0.3, 0.1)
-        @test Hyperopt.nlevels(c_dec) == 4
+        @test length(c_dec.values) == 4
         @test_throws ArgumentError Continuous(0.0, 0.3, 0.1; weights=[1.0, 1.0, 1.0])
         @test Continuous(0.0, 0.3, 0.1; weights=[1.0, 1.0, 1.0, 1.0]) isa Domain
     end
@@ -116,12 +169,12 @@
         rng = StableRNG(1)
 
         nom_v = Nominal([true, false]) # unordered -- Nominal never checks order
-        @test Hyperopt.nlevels(nom_v) == 2
+        @test length(nom_v.values) == 2
         @test all(rand(rng, nom_v) isa Bool for _ in 1:100)
         @test all(rand(rng, nom_v) in nom_v for _ in 1:100)
 
         nom_fns = Nominal([tanh, exp, identity]) # functions have no natural order -- Nominal, not Ordinal
-        @test Hyperopt.nlevels(nom_fns) == 3
+        @test length(nom_fns.values) == 3
         @test all(rand(rng, nom_fns) in (tanh, exp, identity) for _ in 1:100)
         @test all(rand(rng, nom_fns) in nom_fns for _ in 1:100)
 

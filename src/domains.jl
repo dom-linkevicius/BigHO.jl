@@ -9,11 +9,14 @@ the single source of truth for a `Hyperoptimizer` parameter: samplers draw
 directly from it via `rand`, no separate candidate array needed.
 
 One concrete representation backs all three kinds: `type` (`:nominal`,
-`:ordinal`, or `:continuous`) tags which kind it is, `values` holds the
-actual candidates (an index range `1:levels`, an explicit values list, or a
-`min:dt:max` grid), and `weights` is an optional non-uniform sampling weight
-per candidate -- the hook later machinery (e.g. BOHB) uses to bias sampling
-towards promising regions after fitting a density estimate. Construct via
+`:ordinal`, or `:continuous`) tags which kind it is -- this is what later
+machinery (e.g. BOHB fitting a continuous KDE for `:continuous` parameters
+vs. a discrete model for `:nominal`/`:ordinal` ones) dispatches its
+treatment on, not the shape of `values` -- `values` holds the actual sorted
+candidates (an index range `1:levels`, or an explicit values list, evenly
+spaced or not), and `weights` is an optional non-uniform sampling weight per
+candidate -- the hook later machinery uses to bias sampling towards
+promising regions after fitting a density estimate. Construct via
 [`Nominal`](@ref)/[`Ordinal`](@ref)/[`Continuous`](@ref) rather than this
 struct directly.
 
@@ -33,7 +36,8 @@ struct Domain
     function Domain(type::Symbol, values::AbstractVector, weights::Union{Vector{Float64},Nothing})
         type in (:nominal, :ordinal, :continuous) ||
             throw(ArgumentError("type must be :nominal, :ordinal, or :continuous, got $(repr(type))"))
-        _check_weights(length(values), weights)
+        weights === nothing || length(weights) == length(values) ||
+            throw(ArgumentError("weights must have length $(length(values)) (one per level), got $(length(weights))"))
         return new(type, values, weights)
     end
 end
@@ -50,14 +54,6 @@ is no per-call object to hold that state in.
 """
 const DEFAULT_DOMAIN_RNG = StableRNG(1)
 Base.rand(d::Domain) = rand(DEFAULT_DOMAIN_RNG, d)
-
-_check_weights(levels::Int, weights::Nothing) = nothing
-function _check_weights(levels::Int, weights::Vector{Float64})
-    length(weights) == levels || throw(ArgumentError("weights must have length $levels (one per level), got $(length(weights))"))
-    return nothing
-end
-
-nlevels(d::Domain) = length(d.values)
 
 # Dispatch on the runtime type of `d.weights` (concretely `Nothing` or
 # `Vector{Float64}`, even though the field's static type is a `Union`)
@@ -81,9 +77,8 @@ Base.rand(rng::Random.AbstractRNG, d::Domain) = _draw(rng, d)
 
 Membership test: `x` is a member of `d` if it's one of `d`'s candidate
 values (`d.values`). For a [`Continuous`](@ref) domain this uses an
-isapprox-tolerant grid check instead of exact equality -- Julia's own range
-membership test uses exact floating-point equality, which is fragile when
-`dt` doesn't evenly divide `(max - min)`. `missing` is never a member of any
+isapprox-tolerant search over the sorted candidates instead of exact
+equality, to absorb floating-point noise. `missing` is never a member of any
 domain -- membership is always a definite `Bool`, never Julia's usual
 3-valued `missing`-propagating comparison result.
 """
@@ -93,13 +88,21 @@ Base.in(::Missing, ::Domain) = false
 _in(x, d::Domain, ::Union{Val{:nominal},Val{:ordinal}}) = x in d.values
 _in(x, d::Domain, ::Val{:continuous}) = _in_continuous(x, d)
 
+# `d.values` is sorted but not necessarily evenly spaced (e.g. a log-spaced
+# Continuous), so membership can't be computed by arithmetic (`step`) the
+# way an evenly-spaced grid's could -- instead, binary-search to the
+# insertion point and isapprox-check the (at most two) neighboring
+# candidates, tolerance scaled to each candidate's own magnitude since
+# there's no single grid spacing to scale by.
 _in_continuous(x, ::Domain) = false # non-Real x can never be a grid point
 function _in_continuous(x::Real, d::Domain)
     r = d.values
     (first(r) <= x <= last(r)) || return false
-    dt = step(r)
-    idx = round(Int, (x - first(r)) / dt)
-    return isapprox(x, first(r) + idx * dt; atol=1e-9 * max(1, abs(dt)))
+    i = searchsortedfirst(r, x)
+    _tol(v) = 1e-9 * max(1, abs(v))
+    (i <= length(r) && isapprox(x, r[i]; atol=_tol(r[i]))) && return true
+    (i > 1 && isapprox(x, r[i-1]; atol=_tol(r[i-1]))) && return true
+    return false
 end
 
 # Shared construct logic for the standard "levels only" vs "explicit values
@@ -171,17 +174,33 @@ _check_order(values::AbstractVector) =
 
 """
     Continuous(min, max, dt; weights=nothing)
+    Continuous(values::AbstractVector{<:Real}; weights=nothing)
 
-A continuous real-valued dimension bounded by `[min, max]`, discretized into
-a grid of points spaced `dt` apart starting at `min` (`dt` is the distance
-between neighboring points, not a point count -- the number of points is
-derived). If `(max-min)` isn't an exact multiple of `dt`, the last grid
-point falls short of `max` rather than overshooting it. Order here is
-continuous and enforced by construction (`max >= min` is checked).
+A continuous real-valued dimension. The `(min, max, dt)` form discretizes
+`[min, max]` into a grid of points spaced `dt` apart starting at `min` (`dt`
+is the distance between neighboring points, not a point count -- the number
+of points is derived); if `(max-min)` isn't an exact multiple of `dt`, the
+last grid point falls short of `max` rather than overshooting it. Order here
+is continuous and enforced by construction (`max >= min` is checked).
 
-`Continuous` only ever represents a *uniformly* spaced grid; for a
-non-uniformly spaced range (e.g. log-spaced), use [`Ordinal`](@ref) with the
-explicit values instead (e.g. `Ordinal(exp10.(LinRange(-1, 3, 50)))`).
+The `values` form builds a `Continuous` directly from an explicit, strictly
+increasing sequence instead (e.g. `Continuous(1:0.5:5)`, or
+`Continuous(exp10.(LinRange(-1, 3, 50)))` for a log-spaced range) --
+`values` need *not* be evenly spaced; `Continuous` doesn't require a uniform
+grid, unlike what the `(min, max, dt)` form happens to always produce.
+`values` must be sorted with no duplicates (`issorted(values) &&
+allunique(values)`) -- unlike [`Ordinal`](@ref), which allows arbitrary,
+even non-numeric, values, `Continuous` is always numeric and always strictly
+ordered.
+
+What actually distinguishes `Continuous` from [`Ordinal`](@ref) isn't grid
+uniformity -- it's that `Continuous` tags a parameter as genuinely
+real-valued for anything that treats domains differently by kind (e.g. BOHB
+fitting a continuous KDE over `Continuous` parameters vs. a discrete model
+over `Nominal`/`Ordinal` ones). Use `Continuous` for a numeric parameter
+that's conceptually continuous regardless of how its search grid is spaced
+(uniform or log-spaced alike); use `Ordinal` for a genuinely discrete,
+ordered set of values that isn't meant to be treated as continuous.
 
 By default (`weights=nothing`), `rand` draws a grid point uniformly; pass
 `weights` (a `Vector{Float64}`, one per grid point) to draw non-uniformly
@@ -192,4 +211,9 @@ function Continuous(min::Real, max::Real, dt::Real; weights::Union{Vector{Float6
     max >= min || throw(ArgumentError("max ($max) must be >= min ($min)"))
     dt > 0 || throw(ArgumentError("dt must be > 0, got $dt"))
     return Domain(:continuous, min:dt:max, weights)
+end
+function Continuous(values::AbstractVector{<:Real}; weights::Union{Vector{Float64},Nothing}=nothing)
+    issorted(values) && allunique(values) ||
+        throw(ArgumentError("Continuous(values) requires strictly increasing values (no duplicates); got $values"))
+    return Domain(:continuous, collect(Float64.(values)), weights)
 end
