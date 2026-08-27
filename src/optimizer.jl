@@ -36,7 +36,9 @@ function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=Rand
     return ho
 end
 
-reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.trials) >= ho.n
+reached_target(ho::Hyperoptimizer) = _reached_target(ho.n, ho.trials)
+_reached_target(::Nothing, trials) = false
+_reached_target(n::Int, trials) = length(trials) >= n
 
 """
     settarget!(ho, n)
@@ -52,12 +54,16 @@ lowering it after trials have already been planned against the old target is
 not allowed and throws `ArgumentError`.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
-    if ho.n !== nothing && n < ho.n
-        throw(ArgumentError("settarget!: new target ($n) is less than the current target ($(ho.n)) -- settarget! can only raise the target"))
-    end
+    _check_target_increase(ho.n, n)
     ho.n = n
     @info "Hyperoptimizer target set to $(ho.n) trials"
     return ho
+end
+
+_check_target_increase(::Nothing, n::Int) = nothing
+function _check_target_increase(old::Int, n::Int)
+    n < old && throw(ArgumentError("settarget!: new target ($n) is less than the current target ($old) -- settarget! can only raise the target"))
+    return nothing
 end
 
 """
@@ -81,14 +87,18 @@ function ask(ho::Hyperoptimizer)
     end
 end
 
-_rank_min(v) = (v isa Real && isnan(v)) ? Inf : v
+_rank_min(v::Real) = isnan(v) ? Inf : v
+_rank_min(v) = v
 
 function update_best!(ho::Hyperoptimizer, trial::Trial, result::Result)
-    if ho.best_min_id === nothing || _rank_min(result.value) < _rank_min(ho.results[ho.best_min_id].value)
+    if _is_new_best(ho.best_min_id, ho.results, result.value)
         ho.best_min_id = trial.id
     end
     return ho
 end
+
+_is_new_best(::Nothing, results, value) = true
+_is_new_best(best_min_id::Int, results, value) = _rank_min(value) < _rank_min(results[best_min_id].value)
 
 """
     tell!(ho, trial, outcome)
@@ -101,7 +111,7 @@ non-`Completed` trial.
 """
 function tell!(ho::Hyperoptimizer, trial::Trial, outcome)
     lock(ho.lock) do
-        result = outcome isa Result ? outcome : to_result(outcome)
+        result = to_result(outcome) # dispatches on outcome's type -- passes a Result through unchanged, wraps anything else
         ho.results[trial.id] = result
         ho.n_pending -= 1
         if result.status === Completed
@@ -138,14 +148,15 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
             (ho.done || reached_target(ho) || exhausted(ho.sampler, ho)) && ho.n_pending == 0 && break
         end
     catch e
-        if e isa InterruptException
-            ho.done = true
-            @info "Aborting hyperoptimization, returning partial results"
-        else
-            rethrow()
-        end
+        _handle_run_error(e, ho)
     finally
         shutdown!(executor)
     end
     return ho
+end
+
+_handle_run_error(e, ho::Hyperoptimizer) = rethrow(e)
+function _handle_run_error(::InterruptException, ho::Hyperoptimizer)
+    ho.done = true
+    @info "Aborting hyperoptimization, returning partial results"
 end

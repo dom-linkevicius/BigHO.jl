@@ -44,10 +44,9 @@ function minimizer(ho::Hyperoptimizer)
 end
 
 _domain_summary(d::Continuous) = "[$(d.min), $(d.max)], dt=$(d.dt)"
-function _domain_summary(d::Union{Levels,Categorical})
-    d.values !== nothing && length(d.values) <= 3 && return string(d.values)
-    return "length: $(nlevels(d))"
-end
+_domain_summary(d::Union{Levels,Categorical}) = _values_summary(d.values, nlevels(d))
+_values_summary(::Nothing, n::Int) = "length: $n"
+_values_summary(values::Vector, n::Int) = length(values) <= 3 ? string(values) : "length: $n"
 
 function Base.show(io::IO, ho::Hyperoptimizer)
     println(io, "Hyperoptimizer with")
@@ -56,10 +55,11 @@ function Base.show(io::IO, ho::Hyperoptimizer)
         "  " * string(k) * " " * _domain_summary(c)
     end
     println(io, join(candstrings, "\n"))
-    if ho.best_min_id === nothing
-        println(io, "  no completed runs yet")
-        return
-    end
+    _show_optimum(io, ho, ho.best_min_id)
+end
+
+_show_optimum(io::IO, ho::Hyperoptimizer, ::Nothing) = println(io, "  no completed runs yet")
+function _show_optimum(io::IO, ho::Hyperoptimizer, ::Int)
     println(io, "  minimum: $(minimum(ho))")
     println(io, "  minimizer:")
     mzer = minimizer(ho)
@@ -68,14 +68,13 @@ function Base.show(io::IO, ho::Hyperoptimizer)
     end
     println(io)
     for v in mzer
-        if v isa Number
-            @printf(io, "%9.4g ", v)
-        else
-            @printf(io, "%9s ", v)
-        end
+        _print_value(io, v)
     end
     println(io)
 end
+
+_print_value(io::IO, v::Number) = @printf(io, "%9.4g ", v)
+_print_value(io::IO, v) = @printf(io, "%9s ", v)
 
 """
     printmin([io=stdout,] ho)
@@ -102,7 +101,9 @@ was sampled was higher than 1, but the optimum occured on the lowest sampled
 value.
 """
 _isnumeric_domain(::Continuous) = true
-_isnumeric_domain(d::Union{Levels,Categorical}) = d.values !== nothing && eltype(d.values) <: Real
+_isnumeric_domain(d::Union{Levels,Categorical}) = _isnumeric_values(d.values)
+_isnumeric_values(::Nothing) = false
+_isnumeric_values(values::Vector) = eltype(values) <: Real
 
 function warn_on_boundary(ho::Hyperoptimizer)
     m = minimizer(ho)

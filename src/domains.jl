@@ -46,10 +46,24 @@ end
 # below, since they need the struct to already exist.
 nlevels(d::Ordinal) = d.levels
 
-function _sample_level(rng::Random.AbstractRNG, d::Domain)
-    n = nlevels(d)
-    return d.weights === nothing ? rand(rng, 1:n) : sample(rng, 1:n, Weights(d.weights))
-end
+# Dispatch on the runtime type of `d.weights` (concretely `Nothing` or
+# `Vector{Float64}`, even though the field's static type is a `Union`)
+# instead of branching on it -- each method below is fully specialized for
+# its case.
+_sample_level(rng::Random.AbstractRNG, d::Domain) = _sample_level(rng, d, d.weights)
+_sample_level(rng::Random.AbstractRNG, d::Domain, ::Nothing) = rand(rng, 1:nlevels(d))
+_sample_level(rng::Random.AbstractRNG, d::Domain, weights::Vector{Float64}) = sample(rng, 1:nlevels(d), Weights(weights))
+
+# Same idiom for `Levels`/`Categorical`'s `values` field (`Nothing` or
+# `Vector`): dispatch on its runtime type instead of branching on it. Shared
+# by both, since they use the identical "return the index itself, or the
+# corresponding value if `values` was given" representation.
+_resolve_value(::Nothing, idx::Int) = idx
+_resolve_value(values::Vector, idx::Int) = values[idx]
+
+_value_in(x::Integer, ::Nothing, levels::Int) = 1 <= x <= levels
+_value_in(x, ::Nothing, levels::Int) = false # non-Integer x can never be a member of an index-only domain
+_value_in(x, values::Vector, ::Int) = x in values
 
 """
     Levels(levels::Int; weights=nothing)
@@ -88,13 +102,10 @@ Draw a level index from `1:d.levels`, uniformly unless `d.weights` was
 given -- or, if `d` was constructed from a values list, the corresponding
 value from that list.
 """
-function Base.rand(rng::Random.AbstractRNG, d::Levels)
-    idx = _sample_level(rng, d)
-    return d.values === nothing ? idx : d.values[idx]
-end
+Base.rand(rng::Random.AbstractRNG, d::Levels) = _resolve_value(d.values, _sample_level(rng, d))
 Base.rand(d::Levels) = rand(DEFAULT_DOMAIN_RNG, d)
 
-Base.in(x, d::Levels) = d.values === nothing ? (x isa Integer && 1 <= x <= d.levels) : (x in d.values)
+Base.in(x, d::Levels) = _value_in(x, d.values, d.levels)
 
 """
     Continuous(min, max, dt; weights=nothing)
@@ -142,8 +153,8 @@ function Base.rand(rng::Random.AbstractRNG, d::Continuous)
 end
 Base.rand(d::Continuous) = rand(DEFAULT_DOMAIN_RNG, d)
 
-function Base.in(x, d::Continuous)
-    x isa Real || return false
+Base.in(x, d::Continuous) = false # non-Real x can never be a grid point
+function Base.in(x::Real, d::Continuous)
     (d.min <= x <= d.max) || return false
     idx = round(Int, (x - d.min) / d.dt)
     return isapprox(x, d.min + idx * d.dt; atol=1e-9 * max(1, abs(d.dt)))
@@ -189,10 +200,7 @@ Draw a level index from `1:d.levels`, uniformly unless `d.weights` was
 given -- or, if `d` was constructed from a values list, the corresponding
 value from that list.
 """
-function Base.rand(rng::Random.AbstractRNG, d::Categorical)
-    idx = _sample_level(rng, d)
-    return d.values === nothing ? idx : d.values[idx]
-end
+Base.rand(rng::Random.AbstractRNG, d::Categorical) = _resolve_value(d.values, _sample_level(rng, d))
 Base.rand(d::Categorical) = rand(DEFAULT_DOMAIN_RNG, d)
 
-Base.in(x, d::Categorical) = d.values === nothing ? (x isa Integer && 1 <= x <= d.levels) : (x in d.values)
+Base.in(x, d::Categorical) = _value_in(x, d.values, d.levels)

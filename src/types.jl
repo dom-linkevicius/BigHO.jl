@@ -28,6 +28,7 @@ end
 
 to_result(outcome) = Result(outcome, Completed)
 to_result(outcome::Exception) = Result(missing, Failed)
+to_result(outcome::Result) = outcome # already a Result (e.g. from a fault-tolerant executor) -- pass through unchanged
 
 """
     AskContext(candidates, n_asked, n)
