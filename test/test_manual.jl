@@ -7,14 +7,14 @@
     ho = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Nominal([true, false]), c=Nominal(randn(100))); n=10)
     show(devnull, ho)
     for _ in 1:10
-        entry = ask(ho)
+        entry = Hyperopt.ask(ho)
         println(entry.id, "\t", entry.params)
     end
     @test length(ho.runs) == 10
     show(devnull, ho)
 
     ho2 = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Nominal([true, false]), c=Nominal(randn(100))); n=10)
-    entries = [ask(ho2) for _ in 1:10]
+    entries = [Hyperopt.ask(ho2) for _ in 1:10]
     @test length(entries) == 10
     @test length(ho2.runs) == 10
     @test all(e -> e.params[1] in ho2.candidates[1], entries)

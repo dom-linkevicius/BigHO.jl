@@ -14,7 +14,7 @@
     @test length(ho_nan.runs) == 2         # both trials are recorded...
     @test length(results(ho_nan)) == 1    # ...but only the non-NaN one is Completed
     @test !any(isnan, results(ho_nan))
-    @test ho_nan.runs[2].status == Failed
+    @test ho_nan.runs[2].status == Hyperopt.Failed
     @test ho_nan.runs[2].value === missing
 
     # A thrown exception behaves the same way: Failed, warns showing what was
@@ -28,7 +28,7 @@
     @test minimizer(ho_err) == [20, 1]
     @test length(ho_err.runs) == 2
     @test length(results(ho_err)) == 1
-    @test ho_err.runs[2].status == Failed
+    @test ho_err.runs[2].status == Hyperopt.Failed
     @test ho_err.runs[2].value === missing
 
     # A run where every trial fails has no completed trial at all -- the

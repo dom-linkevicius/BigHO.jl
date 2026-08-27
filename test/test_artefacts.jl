@@ -80,5 +80,5 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     @test_logs (:warn, r"missing") run!(ho_missing)
     @test minimum(ho_missing) == 5.0
     @test length(results(ho_missing)) == 1
-    @test ho_missing.runs[2].status == Failed
+    @test ho_missing.runs[2].status == Hyperopt.Failed
 end
