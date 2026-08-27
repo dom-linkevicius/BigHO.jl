@@ -1,32 +1,28 @@
 @testset "Domains" begin
     @info "Testing Domain primitives"
 
-    @testset "hierarchy" begin
-        @test Nominal <: Categorical
-        @test Ordinal <: Categorical
-        @test Categorical <: Domain
-        @test Continuous <: Domain
-        @test !(Continuous <: Categorical) # order there is continuous/enforced by construction, not part of this hierarchy
-        @test !(Nominal <: Ordinal)
-        @test !(Ordinal <: Nominal)
+    @testset "kind" begin
+        @test Nominal(4) isa Domain
+        @test Ordinal(3) isa Domain
+        @test Continuous(1, 5, 1) isa Domain
+        @test Nominal(4).type == :nominal
+        @test Ordinal(3).type == :ordinal
+        @test Continuous(1, 5, 1).type == :continuous
     end
 
     nom = Nominal(4)
     @test nom isa Domain
-    @test nom isa Categorical
-    @test nom.levels == 4
+    @test Hyperopt.nlevels(nom) == 4
 
     ord = Ordinal(3)
     @test ord isa Domain
-    @test ord isa Categorical
-    @test ord.levels == 3
+    @test Hyperopt.nlevels(ord) == 3
 
     c = Continuous(1, 5, 1) # dt=1 -> grid points 1,2,3,4,5
     @test c isa Domain
-    @test !(c isa Categorical)
-    @test c.min == 1.0
-    @test c.max == 5.0
-    @test c.dt == 1.0
+    @test first(c.values) == 1.0
+    @test last(c.values) == 5.0
+    @test step(c.values) == 1.0
     @test Hyperopt.nlevels(c) == 5
 
     # dt need not evenly divide (max-min): the grid stops at or before max, never past it.
@@ -72,8 +68,8 @@
         # every Continuous draw must land exactly on the discretization grid
         @test all(1:1000) do _
             v = rand(rng, c)
-            idx = round(Int, (v - c.min) / c.dt)
-            isapprox(v, c.min + idx * c.dt; atol=1e-9)
+            idx = round(Int, (v - first(c.values)) / step(c.values))
+            isapprox(v, first(c.values) + idx * step(c.values); atol=1e-9)
         end
 
         @test rand(nom) isa Int   # no explicit rng also works
@@ -98,18 +94,34 @@
         @test_throws ArgumentError Nominal(4; weights=[1.0, 2.0])
         @test_throws ArgumentError Ordinal(3; weights=[1.0, 2.0, 3.0, 4.0])
         @test_throws ArgumentError Continuous(1, 5, 1; weights=[1.0, 2.0])
+
+        # Also rejected when constructing a Domain directly (bypassing
+        # Nominal/Ordinal/Continuous) -- the check lives on Domain's own
+        # inner constructor precisely so no construction path can skip it.
+        @test_throws ArgumentError Domain(:nominal, [1, 2, 3], [1.0])
+        @test_throws ArgumentError Domain(:bogus, [1, 2, 3], nothing)
+
+        # Continuous's grid point count is derived from `length(min:dt:max)`,
+        # not a hand-rolled floor((max-min)/dt)+1 formula -- Julia's range
+        # length correctly counts 4 points here (0.0, 0.1, 0.2, 0.3) even
+        # though naive floating-point division of (0.3-0.0)/0.1 comes out
+        # just under 3.0. A weights vector must match that true count.
+        c_dec = Continuous(0.0, 0.3, 0.1)
+        @test Hyperopt.nlevels(c_dec) == 4
+        @test_throws ArgumentError Continuous(0.0, 0.3, 0.1; weights=[1.0, 1.0, 1.0])
+        @test Continuous(0.0, 0.3, 0.1; weights=[1.0, 1.0, 1.0, 1.0]) isa Domain
     end
 
     @testset "values-based construction (Domain replaces a plain candidate array)" begin
         rng = StableRNG(1)
 
         nom_v = Nominal([true, false]) # unordered -- Nominal never checks order
-        @test nom_v.levels == 2
+        @test Hyperopt.nlevels(nom_v) == 2
         @test all(rand(rng, nom_v) isa Bool for _ in 1:100)
         @test all(rand(rng, nom_v) in nom_v for _ in 1:100)
 
         nom_fns = Nominal([tanh, exp, identity]) # functions have no natural order -- Nominal, not Ordinal
-        @test nom_fns.levels == 3
+        @test Hyperopt.nlevels(nom_fns) == 3
         @test all(rand(rng, nom_fns) in (tanh, exp, identity) for _ in 1:100)
         @test all(rand(rng, nom_fns) in nom_fns for _ in 1:100)
 
@@ -129,5 +141,14 @@
         @test 3.0 in c
         @test 3.5 ∉ c   # c has dt=1, so 3.5 isn't on the grid
         @test 6.0 ∉ c   # out of [min,max]
+
+        # `missing in d` is always a definite Bool (false), never Julia's
+        # usual 3-valued `missing`-propagating comparison result -- for every
+        # domain kind, including a level-count-only one (whose Base.OneTo
+        # membership check would otherwise fall into Julia's generic
+        # missing-propagating `in` fallback).
+        @test (missing in nom) === false
+        @test (missing in nom_v) === false
+        @test (missing in c) === false
     end
 end

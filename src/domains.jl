@@ -1,29 +1,42 @@
 """
     Domain
 
-Describes *what kind* of variable a hyperparameter is, and (optionally) the
-actual candidate values it can take -- categorical (discrete, nominal or
-ordinal -- see [`Categorical`](@ref)) or continuous (a numeric range
+Describes *what kind* of variable a hyperparameter is, and the actual
+candidate values it can take: nominal or ordinal (discrete -- see
+[`Nominal`](@ref)/[`Ordinal`](@ref)) or continuous (a numeric range
 discretized at some resolution -- see [`Continuous`](@ref)). A `Domain` is
 the single source of truth for a `Hyperoptimizer` parameter: samplers draw
 directly from it via `rand`, no separate candidate array needed.
-"""
-abstract type Domain end
 
-"""
-    Categorical <: Domain
+One concrete representation backs all three kinds: `type` (`:nominal`,
+`:ordinal`, or `:continuous`) tags which kind it is, `values` holds the
+actual candidates (an index range `1:levels`, an explicit values list, or a
+`min:dt:max` grid), and `weights` is an optional non-uniform sampling weight
+per candidate -- the hook later machinery (e.g. BOHB) uses to bias sampling
+towards promising regions after fitting a density estimate. Construct via
+[`Nominal`](@ref)/[`Ordinal`](@ref)/[`Continuous`](@ref) rather than this
+struct directly.
 
-Any discrete domain, in the classical statistics sense that splits into two
-concrete kinds: [`Nominal`](@ref) (no meaningful order between the levels)
-and [`Ordinal`](@ref) (a meaningful order, checked where it can be). Both
-are represented internally as `n` discretized, weightable positions `1:n`,
-sharing that representation with [`Continuous`](@ref) (a `Domain`, not a
-`Categorical` -- order there is continuous and enforced by construction
-instead) via `Domain`-level sampling machinery. Sharing it is deliberate:
-later machinery (e.g. BOHB updating sampling weights from a fitted KDE) can
-be written once and apply to all three.
+The weights/type invariant is enforced here, in `Domain`'s own inner
+constructor, rather than only in `Nominal`/`Ordinal`/`Continuous` -- so it
+holds no matter how a `Domain` was built. Without this, a wrong-length
+`weights` bypassing those three functions wouldn't error at all: StatsBase's
+`sample` doesn't validate `length(weights) == length(population)` either, so
+a mismatch would silently degrade into always drawing the same element,
+forever, rather than throwing.
 """
-abstract type Categorical <: Domain end
+struct Domain
+    type::Symbol
+    values::AbstractVector
+    weights::Union{Vector{Float64},Nothing}
+
+    function Domain(type::Symbol, values::AbstractVector, weights::Union{Vector{Float64},Nothing})
+        type in (:nominal, :ordinal, :continuous) ||
+            throw(ArgumentError("type must be :nominal, :ordinal, or :continuous, got $(repr(type))"))
+        _check_weights(length(values), weights)
+        return new(type, values, weights)
+    end
+end
 
 """
 Shared default RNG for `rand(d::Domain)` calls with no explicit `rng`
@@ -44,65 +57,56 @@ function _check_weights(levels::Int, weights::Vector{Float64})
     return nothing
 end
 
-# Shared sampling mechanics for any domain with `nlevels(d)` discretized
-# positions `1:n` and an optional `d.weights` over them (`nothing` => uniform).
-# `nlevels` methods for each concrete type are defined alongside that type,
-# below, since they need the struct to already exist.
-nlevels(d::Categorical) = d.levels
+nlevels(d::Domain) = length(d.values)
 
 # Dispatch on the runtime type of `d.weights` (concretely `Nothing` or
 # `Vector{Float64}`, even though the field's static type is a `Union`)
 # instead of branching on it -- each method below is fully specialized for
 # its case.
-_sample_level(rng::Random.AbstractRNG, d::Domain) = _sample_level(rng, d, d.weights)
-_sample_level(rng::Random.AbstractRNG, d::Domain, ::Nothing) = rand(rng, 1:nlevels(d))
-_sample_level(rng::Random.AbstractRNG, d::Domain, weights::Vector{Float64}) = sample(rng, 1:nlevels(d), Weights(weights))
-
-# Same idiom for `Nominal`/`Ordinal`'s `values` field (`Nothing` or
-# `Vector`): dispatch on its runtime type instead of branching on it. Shared
-# by both via the `Categorical` ancestor, since they use the identical
-# "return the index itself, or the corresponding value if `values` was
-# given" representation.
-_resolve_value(::Nothing, idx::Int) = idx
-_resolve_value(values::Vector, idx::Int) = values[idx]
-
-_value_in(x::Integer, ::Nothing, levels::Int) = 1 <= x <= levels
-_value_in(x, ::Nothing, levels::Int) = false # non-Integer x can never be a member of an index-only domain
-_value_in(x, values::Vector, ::Int) = x in values
+_draw(rng::Random.AbstractRNG, d::Domain) = _draw(rng, d, d.weights)
+_draw(rng::Random.AbstractRNG, d::Domain, ::Nothing) = rand(rng, d.values)
+_draw(rng::Random.AbstractRNG, d::Domain, weights::Vector{Float64}) = sample(rng, d.values, Weights(weights))
 
 """
-    rand([rng,] d::Categorical)
+    rand([rng,] d::Domain)
 
-Draw a level index from `1:d.levels`, uniformly unless `d.weights` was
-given -- or, if `d` was constructed from a values list, the corresponding
-value from that list. Shared by both [`Nominal`](@ref) and [`Ordinal`](@ref),
-which use the identical representation and differ only in whether
-construction checks the values' order.
+Draw a candidate from `d`: a level index, or (if `d` was constructed from a
+values list) the corresponding value, for [`Nominal`](@ref)/[`Ordinal`](@ref);
+a grid point, for [`Continuous`](@ref). Uniform unless `d.weights` was given.
 """
-Base.rand(rng::Random.AbstractRNG, d::Categorical) = _resolve_value(d.values, _sample_level(rng, d))
+Base.rand(rng::Random.AbstractRNG, d::Domain) = _draw(rng, d)
 
 """
-    x in d::Categorical
+    x in d::Domain
 
-Membership test: `x` is a member of `d` if `d` was constructed from a values
-list and `x` is one of them, or (for a level-count-only `d`) if `x` is an
-`Int` in `1:d.levels`.
+Membership test: `x` is a member of `d` if it's one of `d`'s candidate
+values (`d.values`). For a [`Continuous`](@ref) domain this uses an
+isapprox-tolerant grid check instead of exact equality -- Julia's own range
+membership test uses exact floating-point equality, which is fragile when
+`dt` doesn't evenly divide `(max - min)`. `missing` is never a member of any
+domain -- membership is always a definite `Bool`, never Julia's usual
+3-valued `missing`-propagating comparison result.
 """
-Base.in(x, d::Categorical) = _value_in(x, d.values, d.levels)
+Base.in(x, d::Domain) = _in(x, d, Val(d.type))
+Base.in(::Missing, ::Domain) = false
 
-# Shared validate+construct logic for any concrete Categorical subtype with
-# the standard (levels, values, weights) field layout -- both constructor
-# forms (bare count vs. explicit values) exist for both Nominal and Ordinal,
-# differing only in the type being built and (for Ordinal's values form) an
-# extra order check layered on top by that type's own constructor.
-function _from_levelcount(::Type{T}, levels::Int, weights) where {T<:Categorical}
-    _check_weights(levels, weights)
-    return T(levels, nothing, weights)
+_in(x, d::Domain, ::Union{Val{:nominal},Val{:ordinal}}) = x in d.values
+_in(x, d::Domain, ::Val{:continuous}) = _in_continuous(x, d)
+
+_in_continuous(x, ::Domain) = false # non-Real x can never be a grid point
+function _in_continuous(x::Real, d::Domain)
+    r = d.values
+    (first(r) <= x <= last(r)) || return false
+    dt = step(r)
+    idx = round(Int, (x - first(r)) / dt)
+    return isapprox(x, first(r) + idx * dt; atol=1e-9 * max(1, abs(dt)))
 end
-function _from_values(::Type{T}, values::AbstractVector, weights) where {T<:Categorical}
-    _check_weights(length(values), weights)
-    return T(length(values), collect(values), weights)
-end
+
+# Shared construct logic for the standard "levels only" vs "explicit values
+# list" constructor pair, common to Nominal and Ordinal. No need to
+# separately validate weights here -- Domain's own inner constructor does.
+_from_levelcount(type::Symbol, levels::Int, weights) = Domain(type, Base.OneTo(levels), weights)
+_from_values(type::Symbol, values::AbstractVector, weights) = Domain(type, collect(values), weights)
 
 """
     Nominal(levels::Int; weights=nothing)
@@ -123,13 +127,8 @@ versus `Ordinal`.
 By default (`weights=nothing`), `rand` draws uniformly; pass `weights` (a
 `Vector{Float64}` of length `levels`) to draw non-uniformly instead.
 """
-struct Nominal <: Categorical
-    levels::Int
-    values::Union{Vector,Nothing}
-    weights::Union{Vector{Float64},Nothing}
-end
-Nominal(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing) = _from_levelcount(Nominal, levels, weights)
-Nominal(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing) = _from_values(Nominal, values, weights)
+Nominal(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing) = _from_levelcount(:nominal, levels, weights)
+Nominal(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing) = _from_values(:nominal, values, weights)
 
 """
     Ordinal(levels::Int; weights=nothing)
@@ -157,19 +156,12 @@ there's no reliable way to verify it: construction instead emits `@warn`
 showing the values in the order given, and assumes that order is intentional.
 
 By default (`weights=nothing`), `rand` draws uniformly; pass `weights` (a
-`Vector{Float64}` of length `levels`) to draw non-uniformly instead -- this
-is the hook later machinery (e.g. BOHB) uses to bias sampling towards
-promising regions after fitting a density estimate.
+`Vector{Float64}` of length `levels`) to draw non-uniformly instead.
 """
-struct Ordinal <: Categorical
-    levels::Int
-    values::Union{Vector,Nothing}
-    weights::Union{Vector{Float64},Nothing}
-end
-Ordinal(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing) = _from_levelcount(Ordinal, levels, weights)
+Ordinal(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing) = _from_levelcount(:ordinal, levels, weights)
 function Ordinal(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing)
     _check_order(values)
-    return _from_values(Ordinal, values, weights)
+    return _from_values(:ordinal, values, weights)
 end
 
 _check_order(values::AbstractVector{<:Real}) =
@@ -182,12 +174,10 @@ _check_order(values::AbstractVector) =
 
 A continuous real-valued dimension bounded by `[min, max]`, discretized into
 a grid of points spaced `dt` apart starting at `min` (`dt` is the distance
-between neighboring points, not a point count -- the number of points,
-`floor((max-min)/dt)+1`, is derived). If `(max-min)` isn't an exact multiple
-of `dt`, the last grid point falls short of `max` rather than overshooting it.
-Order here is continuous and enforced by construction (`max >= min` is
-checked), unlike `Categorical`'s subtypes -- so `Continuous` is a `Domain`
-directly, not a `Categorical`.
+between neighboring points, not a point count -- the number of points is
+derived). If `(max-min)` isn't an exact multiple of `dt`, the last grid
+point falls short of `max` rather than overshooting it. Order here is
+continuous and enforced by construction (`max >= min` is checked).
 
 `Continuous` only ever represents a *uniformly* spaced grid; for a
 non-uniformly spaced range (e.g. log-spaced), use [`Ordinal`](@ref) with the
@@ -195,39 +185,11 @@ explicit values instead (e.g. `Ordinal(exp10.(LinRange(-1, 3, 50)))`).
 
 By default (`weights=nothing`), `rand` draws a grid point uniformly; pass
 `weights` (a `Vector{Float64}`, one per grid point) to draw non-uniformly
-instead -- this is the hook later machinery (e.g. BOHB) uses to bias sampling
-towards promising regions after fitting a density estimate.
+instead.
 """
-struct Continuous <: Domain
-    min::Float64
-    max::Float64
-    dt::Float64
-    weights::Union{Vector{Float64},Nothing}
-end
 function Continuous(min::Real, max::Real, dt::Real; weights::Union{Vector{Float64},Nothing}=nothing)
     min, max, dt = Float64(min), Float64(max), Float64(dt)
     max >= min || throw(ArgumentError("max ($max) must be >= min ($min)"))
     dt > 0 || throw(ArgumentError("dt must be > 0, got $dt"))
-    _check_weights(floor(Int, (max - min) / dt) + 1, weights)
-    return Continuous(min, max, dt, weights)
-end
-
-nlevels(d::Continuous) = floor(Int, (d.max - d.min) / d.dt) + 1
-
-"""
-    rand([rng,] d::Continuous) -> Float64
-
-Draw a grid point from `d`'s discretization, uniformly unless `d.weights`
-was given.
-"""
-function Base.rand(rng::Random.AbstractRNG, d::Continuous)
-    idx = _sample_level(rng, d)
-    return d.min + (idx - 1) * d.dt
-end
-
-Base.in(x, d::Continuous) = false # non-Real x can never be a grid point
-function Base.in(x::Real, d::Continuous)
-    (d.min <= x <= d.max) || return false
-    idx = round(Int, (x - d.min) / d.dt)
-    return isapprox(x, d.min + idx * d.dt; atol=1e-9 * max(1, abs(d.dt)))
+    return Domain(:continuous, min:dt:max, weights)
 end

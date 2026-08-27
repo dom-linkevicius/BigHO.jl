@@ -43,10 +43,14 @@ function minimizer(ho::Hyperoptimizer)
     return collect(ho.runs[ho.best_min_id].params)
 end
 
-_domain_summary(d::Continuous) = "[$(d.min), $(d.max)], dt=$(d.dt)"
-_domain_summary(d::Categorical) = _values_summary(d.values, nlevels(d))
-_values_summary(::Nothing, n::Int) = "length: $n"
-_values_summary(values::Vector, n::Int) = length(values) <= 3 ? string(values) : "length: $n"
+# Dispatches on the concrete type of `d.values` -- a `Continuous` domain is
+# the only one ever backed by an `AbstractRange`, and a level-count-only
+# Nominal/Ordinal is the only one ever backed by a `Base.OneTo`, so this
+# tells the three cases apart without needing `d.type`.
+_domain_summary(d::Domain) = _domain_summary(d.values)
+_domain_summary(values::AbstractRange) = "[$(first(values)), $(last(values))], dt=$(step(values))"
+_domain_summary(values::Base.OneTo) = "length: $(length(values))"
+_domain_summary(values::AbstractVector) = length(values) <= 3 ? string(values) : "length: $(length(values))"
 
 function Base.show(io::IO, ho::Hyperoptimizer)
     println(io, "Hyperoptimizer with")
@@ -88,45 +92,3 @@ function printmin(io::IO, ho::Hyperoptimizer)
     end
 end
 
-"""
-    warn_on_boundary(ho)
-
-Prints a warning message for each parameter where the optimum was obtained on
-an extreme point of the sampled space. Only meaningful for `Continuous`/
-`Ordinal` domains -- `Nominal` domains have no notion of "boundary" at all
-(their levels aren't ordered), so they're skipped entirely.
-
-Example: If parameter `a` can take values in 1:10 and the optimum was obtained
-at `a = 1`, it's an indication that the parameter was constrained by the
-search space. The warning is effective even if the lowest value of `a` that
-was sampled was higher than 1, but the optimum occured on the lowest sampled
-value -- deliberately checked against the *sampled* extreme, not the
-domain's declared bounds, since a small sample may never actually reach the
-true min/max even though the optimizer is still visibly pushing toward one.
-"""
-_has_boundary(::Continuous) = true
-_has_boundary(::Ordinal) = true
-_has_boundary(::Nominal) = false
-
-# A value's position for boundary-extremum comparison purposes: itself, when
-# numeric order already means the right thing (Continuous, or an Ordinal
-# with numeric values, or an Ordinal sampled as a bare level index) -- or,
-# for a non-numeric Ordinal, its position in the domain's own (asserted, at
-# construction) order, since e.g. `extrema(["low","medium","high"])` would
-# silently use alphabetical order instead (see Ordinal's own docstring).
-_boundary_rank(::Continuous, v) = v
-_boundary_rank(::Ordinal, v::Real) = v
-_boundary_rank(d::Ordinal, v) = findfirst(==(v), d.values)
-
-function warn_on_boundary(ho::Hyperoptimizer)
-    m = minimizer(ho)
-    hist = history(ho)
-    for i in eachindex(m)
-        c = ho.candidates[i]
-        (_has_boundary(c) && nlevels(c) > 3) || continue
-        ranks = [_boundary_rank(c, h[i]) for h in hist]
-        if _boundary_rank(c, m[i]) ∈ extrema(ranks)
-            println("Parameter $(ho.params[i]) obtained its optimum on an extremum of the sampled region: $(m[i])")
-        end
-    end
-end

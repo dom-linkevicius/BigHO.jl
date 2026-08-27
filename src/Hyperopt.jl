@@ -5,8 +5,8 @@ export RunEntry, RunStatus, Pending, Completed, Failed, Abandoned
 export Stateful, call_objective, apply_outcome
 export Sampler, RandomSampler, on_tell!, init!, presample_size, exhausted
 export AbstractExecutor, Serial, submit!, poll, capacity, start!, shutdown!
-export minimizer, history, results, printmin, warn_on_boundary
-export Domain, Categorical, Nominal, Ordinal, Continuous
+export minimizer, history, results, printmin
+export Domain, Nominal, Ordinal, Continuous
 
 using Random
 using Printf
