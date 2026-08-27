@@ -4,7 +4,7 @@
     # No macro, no `run!` -- just construct and draw samples directly via `ask`.
     # `objective` is `nothing` here since this testset only exercises sampling,
     # never evaluation.
-    ho = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Levels([true, false]), c=Levels(randn(100))); n=10)
+    ho = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Nominal([true, false]), c=Nominal(randn(100))); n=10)
     show(devnull, ho)
     for _ in 1:10
         entry = ask(ho)
@@ -13,7 +13,7 @@
     @test length(ho.runs) == 10
     show(devnull, ho)
 
-    ho2 = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Levels([true, false]), c=Levels(randn(100))); n=10)
+    ho2 = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Nominal([true, false]), c=Nominal(randn(100))); n=10)
     entries = [ask(ho2) for _ in 1:10]
     @test length(entries) == 10
     @test length(ho2.runs) == 10

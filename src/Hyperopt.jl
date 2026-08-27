@@ -6,7 +6,7 @@ export Stateful, call_objective, apply_outcome
 export Sampler, RandomSampler, on_tell!, init!, presample_size, exhausted
 export AbstractExecutor, Serial, submit!, poll, capacity, start!, shutdown!
 export minimizer, history, results, printmin, warn_on_boundary
-export Domain, Ordinal, Levels, Continuous, Categorical
+export Domain, Categorical, Nominal, Ordinal, Continuous
 
 using Random
 using Printf

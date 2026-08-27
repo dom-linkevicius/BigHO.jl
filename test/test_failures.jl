@@ -7,7 +7,7 @@
     let n_calls = Ref(0)
         global nan_after_first(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a * b : NaN)
     end
-    ho_nan = Hyperoptimizer(nan_after_first, (a=Levels([20]), b=Levels([1])); n=2)
+    ho_nan = Hyperoptimizer(nan_after_first, (a=Nominal([20]), b=Nominal([1])); n=2)
     @test_logs (:warn, r"NaN") run!(ho_nan)
     @test minimum(ho_nan) == 20
     @test minimizer(ho_nan) == [20, 1]
@@ -22,7 +22,7 @@
     let n_calls = Ref(0)
         global throws_after_first(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a * b : error("boom"))
     end
-    ho_err = Hyperoptimizer(throws_after_first, (a=Levels([20]), b=Levels([1])); n=2)
+    ho_err = Hyperoptimizer(throws_after_first, (a=Nominal([20]), b=Nominal([1])); n=2)
     @test_logs (:warn, r"exception") run!(ho_err)
     @test minimum(ho_err) == 20
     @test minimizer(ho_err) == [20, 1]
@@ -33,7 +33,7 @@
 
     # A run where every trial fails has no completed trial at all -- the
     # optimum accessors throw rather than returning a sentinel.
-    ho_allnan = Hyperoptimizer((a) -> NaN, (a=Levels([1]),); n=1)
+    ho_allnan = Hyperoptimizer((a) -> NaN, (a=Nominal([1]),); n=1)
     @test_logs (:warn, r"NaN") run!(ho_allnan)
     @test length(results(ho_allnan)) == 0
     @test_throws ErrorException minimum(ho_allnan)
@@ -46,7 +46,7 @@
     let n_calls = Ref(0)
         global nan_with_distinctive_params(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a + b : NaN)
     end
-    ho_params = Hyperoptimizer(nan_with_distinctive_params, (a=Levels([777]), b=Levels([888])); n=2)
+    ho_params = Hyperoptimizer(nan_with_distinctive_params, (a=Nominal([777]), b=Nominal([888])); n=2)
     io = IOBuffer()
     Logging.with_logger(Logging.ConsoleLogger(io)) do
         run!(ho_params)

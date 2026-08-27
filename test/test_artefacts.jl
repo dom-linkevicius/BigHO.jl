@@ -20,7 +20,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
 
     # Plain (non-Stateful) objectives: pre_artefact/post_artefact are always
     # nothing -- the common case, requiring no special handling anywhere.
-    ho_plain = Hyperoptimizer((a, b) -> a + b, (a=Levels([1, 2]), b=Levels([3, 4])); n=3)
+    ho_plain = Hyperoptimizer((a, b) -> a + b, (a=Nominal([1, 2]), b=Nominal([3, 4])); n=3)
     run!(ho_plain)
     @test all(e -> e.pre_artefact === nothing, ho_plain.runs)
     @test all(e -> e.post_artefact === nothing, ho_plain.runs)
@@ -29,7 +29,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     # RandomSampler never sets one) and returns (metric, post_artefact),
     # which land on .value/.post_artefact respectively -- ranking/minimum/
     # minimizer operate on the scalar metric alone, never on the artefact.
-    ho = Hyperoptimizer(Stateful(train_step), (lr=Levels([0.1, 0.5, 1.0]), momentum=Levels([1.0])); n=3)
+    ho = Hyperoptimizer(Stateful(train_step), (lr=Nominal([0.1, 0.5, 1.0]), momentum=Nominal([1.0])); n=3)
     run!(ho)
     @test all(v -> v isa Float64, results(ho))               # value is the scalar metric, not a tuple
     @test all(e -> e.pre_artefact === nothing, ho.runs)       # RandomSampler never sets pre_artefact (yet)
@@ -41,11 +41,11 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     # handled identically to a plain objective's -- via the same apply_outcome
     # dispatch, since by the time it's caught the outcome is just a plain
     # value or exception either way.
-    ho_nan = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> (NaN, "unused")), (a=Levels([1]),); n=1)
+    ho_nan = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> (NaN, "unused")), (a=Nominal([1]),); n=1)
     @test_logs (:warn, r"NaN") run!(ho_nan)
     @test length(results(ho_nan)) == 0
 
-    ho_err = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> error("boom")), (a=Levels([1]),); n=1)
+    ho_err = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> error("boom")), (a=Nominal([1]),); n=1)
     @test_logs (:warn, r"exception") run!(ho_err)
     @test length(results(ho_err)) == 0
 
@@ -54,7 +54,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     # confirms the extension point is genuinely open, not special-cased to
     # Stateful internally.
     log = Any[]
-    ho_custom = Hyperoptimizer(LoggingWrapper((a, b) -> a + b, log), (a=Levels([1]), b=Levels([2])); n=1)
+    ho_custom = Hyperoptimizer(LoggingWrapper((a, b) -> a + b, log), (a=Nominal([1]), b=Nominal([2])); n=1)
     run!(ho_custom)
     @test log == [nothing]
     @test minimum(ho_custom) == 3
@@ -65,7 +65,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     # just because it happens to structurally look like one. Dispatch is on
     # the dedicated ObjectiveOutcome wrapper call_objective produces, never on
     # the shape of what the user's own objective returned.
-    ho_tuple = Hyperoptimizer((a, b) -> (a + b, "diagnostic"), (a=Levels([1]), b=Levels([2])); n=1)
+    ho_tuple = Hyperoptimizer((a, b) -> (a + b, "diagnostic"), (a=Nominal([1]), b=Nominal([2])); n=1)
     run!(ho_tuple)
     @test results(ho_tuple) == [(3, "diagnostic")]
     @test ho_tuple.runs[1].post_artefact === nothing # untouched -- this objective was never Stateful
@@ -76,7 +76,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     let n_calls = Ref(0)
         global missing_after_first(a) = (n_calls[] += 1; n_calls[] == 1 ? 5.0 : missing)
     end
-    ho_missing = Hyperoptimizer(missing_after_first, (a=Levels([1, 2]),); n=2)
+    ho_missing = Hyperoptimizer(missing_after_first, (a=Nominal([1, 2]),); n=2)
     @test_logs (:warn, r"missing") run!(ho_missing)
     @test minimum(ho_missing) == 5.0
     @test length(results(ho_missing)) == 1

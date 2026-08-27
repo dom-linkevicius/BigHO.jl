@@ -5,8 +5,8 @@
 
     hor = Hyperoptimizer((a, b, c) -> f(a, b, c=c),
                           (a=Continuous(1, 5, 4 / 49),                    # 50 evenly spaced points
-                           b=Levels([true, false]),
-                           c=Levels(exp10.(LinRange(-1, 3, 50))));        # log-spaced -> non-uniform grid, so Levels not Continuous
+                           b=Nominal([true, false]),
+                           c=Ordinal(exp10.(LinRange(-1, 3, 50))));        # log-spaced, monotonically increasing -> non-uniform grid, so Ordinal not Continuous
                           n=100)
     run!(hor)
     show(devnull, hor)
@@ -29,7 +29,7 @@
     # settarget! can only raise the target, never lower it.
     @test_throws ArgumentError settarget!(hor, 50)
 
-    ho3 = Hyperoptimizer((a, b) -> a * b, (a=Levels([20]), b=Levels([10])); n=1)
+    ho3 = Hyperoptimizer((a, b) -> a * b, (a=Nominal([20]), b=Nominal([10])); n=1)
     run!(ho3)
     io = IOBuffer()
     printmin(io, ho3)
@@ -45,9 +45,9 @@ end
 
     hor = Hyperoptimizer((a, b, c, d) -> f(a, b, c=c) + d(a),
                           (a=Continuous(1, 5, 4 / 49),
-                           b=Levels([true, false]),
-                           c=Levels(exp10.(LinRange(-1, 3, 50))),
-                           d=Categorical([tanh, exp]));
+                           b=Nominal([true, false]),
+                           c=Ordinal(exp10.(LinRange(-1, 3, 50))),
+                           d=Nominal([tanh, exp]));
                           n=100)
     run!(hor)
     show(devnull, hor)
@@ -60,7 +60,7 @@ end
 
 @testset "Non-numerics" begin
     @info "Testing optimizing over non-numeric elements"
-    hor = Hyperoptimizer((g, x) -> g(x), (g=Categorical([sin, exp, identity]), x=Continuous(0, 1, 1 / 99)); n=100)
+    hor = Hyperoptimizer((g, x) -> g(x), (g=Nominal([sin, exp, identity]), x=Continuous(0, 1, 1 / 99)); n=100)
     run!(hor)
     show(devnull, hor)
     @test minimum(hor) < ℯ

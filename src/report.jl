@@ -44,7 +44,7 @@ function minimizer(ho::Hyperoptimizer)
 end
 
 _domain_summary(d::Continuous) = "[$(d.min), $(d.max)], dt=$(d.dt)"
-_domain_summary(d::Union{Levels,Categorical}) = _values_summary(d.values, nlevels(d))
+_domain_summary(d::Categorical) = _values_summary(d.values, nlevels(d))
 _values_summary(::Nothing, n::Int) = "length: $n"
 _values_summary(values::Vector, n::Int) = length(values) <= 3 ? string(values) : "length: $n"
 
@@ -92,34 +92,40 @@ end
     warn_on_boundary(ho)
 
 Prints a warning message for each parameter where the optimum was obtained on
-an extreme point of the sampled space.
+an extreme point of the sampled space. Only meaningful for `Continuous`/
+`Ordinal` domains -- `Nominal` domains have no notion of "boundary" at all
+(their levels aren't ordered), so they're skipped entirely.
 
 Example: If parameter `a` can take values in 1:10 and the optimum was obtained
 at `a = 1`, it's an indication that the parameter was constrained by the
 search space. The warning is effective even if the lowest value of `a` that
 was sampled was higher than 1, but the optimum occured on the lowest sampled
-value.
+value -- deliberately checked against the *sampled* extreme, not the
+domain's declared bounds, since a small sample may never actually reach the
+true min/max even though the optimizer is still visibly pushing toward one.
 """
-_isnumeric_domain(::Continuous) = true
-_isnumeric_domain(d::Union{Levels,Categorical}) = _isnumeric_values(d.values)
-_isnumeric_values(::Nothing) = false
-_isnumeric_values(values::Vector) = eltype(values) <: Real
+_has_boundary(::Continuous) = true
+_has_boundary(::Ordinal) = true
+_has_boundary(::Nominal) = false
+
+# A value's position for boundary-extremum comparison purposes: itself, when
+# numeric order already means the right thing (Continuous, or an Ordinal
+# with numeric values, or an Ordinal sampled as a bare level index) -- or,
+# for a non-numeric Ordinal, its position in the domain's own (asserted, at
+# construction) order, since e.g. `extrema(["low","medium","high"])` would
+# silently use alphabetical order instead (see Ordinal's own docstring).
+_boundary_rank(::Continuous, v) = v
+_boundary_rank(::Ordinal, v::Real) = v
+_boundary_rank(d::Ordinal, v) = findfirst(==(v), d.values)
 
 function warn_on_boundary(ho::Hyperoptimizer)
     m = minimizer(ho)
     hist = history(ho)
-    n_params = length(m)
-    extremas = map(1:n_params) do i
-        c = ho.candidates[i]
-        if _isnumeric_domain(c)
-            extrema(getindex.(hist, i))
-        else
-            (m[i],)
-        end
-    end
     for i in eachindex(m)
         c = ho.candidates[i]
-        if m[i] ∈ extremas[i] && nlevels(c) > 3
+        (_has_boundary(c) && nlevels(c) > 3) || continue
+        ranks = [_boundary_rank(c, h[i]) for h in hist]
+        if _boundary_rank(c, m[i]) ∈ extrema(ranks)
             println("Parameter $(ho.params[i]) obtained its optimum on an extremum of the sampled region: $(m[i])")
         end
     end
