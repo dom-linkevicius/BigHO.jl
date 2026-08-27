@@ -69,4 +69,34 @@
         @test_throws ArgumentError Categorical(3; weights=[1.0, 2.0, 3.0, 4.0])
         @test_throws ArgumentError Continuous(1, 5, 1; weights=[1.0, 2.0])
     end
+
+    @testset "values-based construction (Domain replaces a plain candidate array)" begin
+        rng = StableRNG(1)
+
+        lv_v = Levels([true, false])
+        @test lv_v.levels == 2
+        @test all(rand(rng, lv_v) isa Bool for _ in 1:100)
+        @test all(rand(rng, lv_v) in lv_v for _ in 1:100)
+
+        cat_v = Categorical([tanh, exp, identity])
+        @test cat_v.levels == 3
+        @test all(rand(rng, cat_v) in (tanh, exp, identity) for _ in 1:100)
+        @test all(rand(rng, cat_v) in cat_v for _ in 1:100)
+
+        # log-spaced (non-uniform) values: only representable via Levels, not Continuous.
+        logspaced = Levels(exp10.(LinRange(-1, 3, 50)))
+        @test all(rand(rng, logspaced) in logspaced for _ in 1:200)
+
+        # Domains constructed from a plain level count (no values) don't carry actual
+        # candidate values -- membership only checks against the index range 1:levels.
+        @test 1 in lv
+        @test 5 ∉ lv
+        @test "low" ∉ lv # non-integer -- never a member of an index-only domain
+
+        # Continuous membership: on-grid values are members, off-grid values are not.
+        @test 1.0 in c
+        @test 3.0 in c
+        @test 3.5 ∉ c   # c has dt=1, so 3.5 isn't on the grid
+        @test 6.0 ∉ c   # out of [min,max]
+    end
 end

@@ -16,15 +16,19 @@ end
 """
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
 
-Construct an ask-tell hyperparameter optimizer. `candidates` gives one entry per
-parameter name; `objective` is called as `objective(params...)` (no macro, no
-iteration-index argument). `n`, if given, bounds the total number of trials.
+Construct an ask-tell hyperparameter optimizer. `candidates` gives one
+[`Domain`](@ref) per parameter name (e.g. `Continuous(1,5,0.1)`,
+`Levels([true,false])`, `Categorical([tanh,exp])`); `objective` is called as
+`objective(params...)` (no macro, no iteration-index argument). `n`, if
+given, bounds the total number of trials.
 
 Hyperopt only ever minimizes `objective` — to maximize, minimize `-objective(...)`.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
-    params = collect(Symbol, keys(candidates))
     cands = values(candidates)
+    all(d -> d isa Domain, cands) ||
+        throw(ArgumentError("every candidate must be a Domain (Continuous/Levels/Categorical), got types: $(typeof.(cands))"))
+    params = collect(Symbol, keys(candidates))
     ho = Hyperoptimizer(params, cands, sampler, objective, n,
                          Trial[], Union{Result,Nothing}[], Int[], 0, false,
                          nothing, ReentrantLock())

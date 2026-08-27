@@ -1,9 +1,9 @@
 """
     RandomSampler{T<:AbstractRNG} <: Sampler
 
-Sample a value for each parameter uniformly at random from the candidate
-vectors. Log-uniform sampling is available by providing a log-spaced
-candidate vector. Optionally pass an `AbstractRNG` to initialize.
+Draw each parameter by calling `rand(rng, domain)` on its `Domain` (see
+`src/domains.jl`) -- uniformly by default, or according to that `Domain`'s
+`weights` if it has any. Optionally pass an `AbstractRNG` to initialize.
 
 `ask` is only ever called from the single driver task in `run!`, so unlike
 the pre-rewrite `RandomSampler`, this holds a plain RNG — no `RemoteChannel`
@@ -23,5 +23,5 @@ end
 RandomSampler() = RandomSampler(StableRNG(1))
 
 function (s::RandomSampler)(ctx::AskContext)
-    return [list[rand(s.rng, 1:length(list))] for list in ctx.candidates]
+    return [rand(s.rng, d) for d in ctx.candidates]
 end

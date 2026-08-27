@@ -1,13 +1,12 @@
 """
     Domain
 
-Describes *what kind* of variable a hyperparameter is, independent of any
-particular sampling algorithm or candidate vector -- ordinal (ordered
-discrete, including continuous ranges discretized at some resolution) or
-categorical (unordered/nominal discrete). This is metadata, not a sampler: it
-exists so later machinery (Latin hypercube design, BOHB's kernel density
-estimates) knows which kernel/distance to use for a given dimension without
-having to reverse-engineer it from a candidate vector's element type.
+Describes *what kind* of variable a hyperparameter is, and (optionally) the
+actual candidate values it can take -- ordinal (ordered discrete, including
+continuous ranges discretized at some resolution) or categorical
+(unordered/nominal discrete). A `Domain` is the single source of truth for a
+`Hyperoptimizer` parameter: samplers draw directly from it via `rand`, no
+separate candidate array needed.
 """
 abstract type Domain end
 
@@ -53,35 +52,49 @@ function _sample_level(rng::Random.AbstractRNG, d::Domain)
 end
 
 """
-    Levels(levels; weights=nothing)
+    Levels(levels::Int; weights=nothing)
+    Levels(values::AbstractVector; weights=nothing)
 
 A plain enumerated ordinal dimension with `levels` distinct values that have
 a meaningful order (e.g. "low" < "medium" < "high") even though the values
 themselves need not be numeric.
 
-By default (`weights=nothing`), `rand` draws a level index uniformly from
-`1:levels`; pass `weights` (a `Vector{Float64}` of length `levels`) to draw
-non-uniformly instead.
+Construct from a plain level count (`rand` then returns a level index, an
+`Int` in `1:levels`), or from the actual candidate values directly (e.g.
+`Levels([true, false])`, replacing what used to be a plain candidate array --
+`rand` then returns one of those values).
+
+By default (`weights=nothing`), `rand` draws uniformly; pass `weights` (a
+`Vector{Float64}` of length `levels`) to draw non-uniformly instead.
 """
 struct Levels <: Ordinal
     levels::Int
+    values::Union{Vector,Nothing}
     weights::Union{Vector{Float64},Nothing}
 end
 function Levels(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing)
     _check_weights(levels, weights)
-    return Levels(levels, weights)
+    return Levels(levels, nothing, weights)
+end
+function Levels(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing)
+    _check_weights(length(values), weights)
+    return Levels(length(values), collect(values), weights)
 end
 
 """
-    rand([rng,] d::Levels) -> Int
+    rand([rng,] d::Levels)
 
-Draw a level index from `1:d.levels`, uniformly unless `d.weights` was given.
-`Levels` describes the *kind* of dimension, not the actual candidate values,
-so a draw is an index into whatever ordered candidate list this dimension is
-paired with elsewhere.
+Draw a level index from `1:d.levels`, uniformly unless `d.weights` was
+given -- or, if `d` was constructed from a values list, the corresponding
+value from that list.
 """
-Base.rand(rng::Random.AbstractRNG, d::Levels) = _sample_level(rng, d)
+function Base.rand(rng::Random.AbstractRNG, d::Levels)
+    idx = _sample_level(rng, d)
+    return d.values === nothing ? idx : d.values[idx]
+end
 Base.rand(d::Levels) = rand(DEFAULT_DOMAIN_RNG, d)
+
+Base.in(x, d::Levels) = d.values === nothing ? (x isa Integer && 1 <= x <= d.levels) : (x in d.values)
 
 """
     Continuous(min, max, dt; weights=nothing)
@@ -91,6 +104,10 @@ a grid of points spaced `dt` apart starting at `min` (`dt` is the distance
 between neighboring points, not a point count -- the number of points,
 `floor((max-min)/dt)+1`, is derived). If `(max-min)` isn't an exact multiple
 of `dt`, the last grid point falls short of `max` rather than overshooting it.
+
+`Continuous` only ever represents a *uniformly* spaced grid; for a
+non-uniformly spaced range (e.g. log-spaced), use [`Levels`](@ref) with the
+explicit values instead (e.g. `Levels(exp10.(LinRange(-1, 3, 50)))`).
 
 By default (`weights=nothing`), `rand` draws a grid point uniformly; pass
 `weights` (a `Vector{Float64}`, one per grid point) to draw non-uniformly
@@ -125,36 +142,57 @@ function Base.rand(rng::Random.AbstractRNG, d::Continuous)
 end
 Base.rand(d::Continuous) = rand(DEFAULT_DOMAIN_RNG, d)
 
+function Base.in(x, d::Continuous)
+    x isa Real || return false
+    (d.min <= x <= d.max) || return false
+    idx = round(Int, (x - d.min) / d.dt)
+    return isapprox(x, d.min + idx * d.dt; atol=1e-9 * max(1, abs(d.dt)))
+end
+
 """
-    Categorical(levels; weights=nothing)
+    Categorical(levels::Int; weights=nothing)
+    Categorical(values::AbstractVector; weights=nothing)
 
 A discrete dimension with `levels` distinct nominal values that have no
 meaningful order (e.g. a choice of activation function). Any two distinct
 levels must be treated as equally "different" by design/KDE methods -- unlike
 [`Ordinal`](@ref), this is not part of that hierarchy.
 
-By default (`weights=nothing`), `rand` draws a level index uniformly from
-`1:levels`; pass `weights` (a `Vector{Float64}` of length `levels`) to draw
-non-uniformly instead.
+Construct from a plain level count (`rand` then returns a level index, an
+`Int` in `1:levels`), or from the actual candidate values directly (e.g.
+`Categorical([tanh, exp, identity])`, replacing what used to be a plain
+candidate array -- `rand` then returns one of those values).
+
+By default (`weights=nothing`), `rand` draws uniformly; pass `weights` (a
+`Vector{Float64}` of length `levels`) to draw non-uniformly instead.
 """
 struct Categorical <: Domain
     levels::Int
+    values::Union{Vector,Nothing}
     weights::Union{Vector{Float64},Nothing}
 end
 function Categorical(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing)
     _check_weights(levels, weights)
-    return Categorical(levels, weights)
+    return Categorical(levels, nothing, weights)
+end
+function Categorical(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing)
+    _check_weights(length(values), weights)
+    return Categorical(length(values), collect(values), weights)
 end
 
 nlevels(d::Categorical) = d.levels
 
 """
-    rand([rng,] d::Categorical) -> Int
+    rand([rng,] d::Categorical)
 
 Draw a level index from `1:d.levels`, uniformly unless `d.weights` was
-given. `Categorical` describes the *kind* of dimension, not the actual
-candidate values, so a draw is an index into whatever nominal candidate list
-this dimension is paired with elsewhere.
+given -- or, if `d` was constructed from a values list, the corresponding
+value from that list.
 """
-Base.rand(rng::Random.AbstractRNG, d::Categorical) = _sample_level(rng, d)
+function Base.rand(rng::Random.AbstractRNG, d::Categorical)
+    idx = _sample_level(rng, d)
+    return d.values === nothing ? idx : d.values[idx]
+end
 Base.rand(d::Categorical) = rand(DEFAULT_DOMAIN_RNG, d)
+
+Base.in(x, d::Categorical) = d.values === nothing ? (x isa Integer && 1 <= x <= d.levels) : (x in d.values)

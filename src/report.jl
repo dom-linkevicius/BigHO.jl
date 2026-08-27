@@ -43,12 +43,17 @@ function minimizer(ho::Hyperoptimizer)
     return collect(ho.trials[ho.best_min_id].params)
 end
 
+_domain_summary(d::Continuous) = "[$(d.min), $(d.max)], dt=$(d.dt)"
+function _domain_summary(d::Union{Levels,Categorical})
+    d.values !== nothing && length(d.values) <= 3 && return string(d.values)
+    return "length: $(nlevels(d))"
+end
+
 function Base.show(io::IO, ho::Hyperoptimizer)
     println(io, "Hyperoptimizer with")
     candstrings = map(1:length(ho.candidates)) do i
         k, c = ho.params[i], ho.candidates[i]
-        s = "  " * string(k) * " length: "
-        length(c) <= 3 ? s * string(c) : s * string(length(c))
+        "  " * string(k) * " " * _domain_summary(c)
     end
     println(io, join(candstrings, "\n"))
     if ho.best_min_id === nothing
@@ -96,21 +101,24 @@ search space. The warning is effective even if the lowest value of `a` that
 was sampled was higher than 1, but the optimum occured on the lowest sampled
 value.
 """
+_isnumeric_domain(::Continuous) = true
+_isnumeric_domain(d::Union{Levels,Categorical}) = d.values !== nothing && eltype(d.values) <: Real
+
 function warn_on_boundary(ho::Hyperoptimizer)
     m = minimizer(ho)
     hist = history(ho)
     n_params = length(m)
     extremas = map(1:n_params) do i
         c = ho.candidates[i]
-        if c isa AbstractArray{<:Real}
+        if _isnumeric_domain(c)
             extrema(getindex.(hist, i))
         else
             (m[i],)
         end
     end
     for i in eachindex(m)
-        c = unique(ho.candidates[i])
-        if m[i] ∈ extremas[i] && length(c) > 3
+        c = ho.candidates[i]
+        if m[i] ∈ extremas[i] && nlevels(c) > 3
             println("Parameter $(ho.params[i]) obtained its optimum on an extremum of the sampled region: $(m[i])")
         end
     end
