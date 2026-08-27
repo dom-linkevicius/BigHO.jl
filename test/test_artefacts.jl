@@ -46,7 +46,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     @test length(results(ho_nan)) == 0
 
     ho_err = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> error("boom")), (a=Nominal([1]),); n=1)
-    @test_logs (:warn, r"exception") run!(ho_err)
+    @test_logs (:warn, r"non-Real") run!(ho_err)
     @test length(results(ho_err)) == 0
 
     # A user can define their own wrapper + call_objective method for custom
@@ -59,15 +59,18 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     @test log == [nothing]
     @test minimum(ho_custom) == 3
 
-    # Regression: a PLAIN (non-Stateful) objective that legitimately returns
-    # its own 2-tuple (loss, diagnostic_info) must have that tuple preserved
-    # intact as .value -- never split/misinterpreted as (metric, post_artefact)
-    # just because it happens to structurally look like one. Dispatch is on
-    # the dedicated ObjectiveOutcome wrapper call_objective produces, never on
-    # the shape of what the user's own objective returned.
+    # Regression: a PLAIN (non-Stateful) objective returning its own 2-tuple
+    # (loss, diagnostic_info) is never misinterpreted as a (metric,
+    # post_artefact) pair just because it happens to structurally look like
+    # one -- dispatch is on the dedicated ObjectiveOutcome wrapper
+    # call_objective produces, never on the shape of what the objective
+    # actually returned. Since only a Real is a valid Completed outcome,
+    # this non-Real tuple is correctly marked Failed instead, the same as
+    # any other non-Real return -- not silently split, coerced, or ranked.
     ho_tuple = Hyperoptimizer((a, b) -> (a + b, "diagnostic"), (a=Nominal([1]), b=Nominal([2])); n=1)
-    run!(ho_tuple)
-    @test results(ho_tuple) == [(3, "diagnostic")]
+    @test_logs (:warn, r"non-Real") run!(ho_tuple)
+    @test length(results(ho_tuple)) == 0
+    @test ho_tuple.runs[1].status == Hyperopt.Failed
     @test ho_tuple.runs[1].post_artefact === nothing # untouched -- this objective was never Stateful
 
     # Regression: a plain objective returning `missing` is excluded as
@@ -77,7 +80,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
         global missing_after_first(a) = (n_calls[] += 1; n_calls[] == 1 ? 5.0 : missing)
     end
     ho_missing = Hyperoptimizer(missing_after_first, (a=Nominal([1, 2]),); n=2)
-    @test_logs (:warn, r"missing") run!(ho_missing)
+    @test_logs (:warn, r"non-Real") run!(ho_missing)
     @test minimum(ho_missing) == 5.0
     @test length(results(ho_missing)) == 1
     @test ho_missing.runs[2].status == Hyperopt.Failed

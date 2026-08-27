@@ -23,7 +23,7 @@
         global throws_after_first(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a * b : error("boom"))
     end
     ho_err = Hyperoptimizer(throws_after_first, (a=Nominal([20]), b=Nominal([1])); n=2)
-    @test_logs (:warn, r"exception") run!(ho_err)
+    @test_logs (:warn, r"non-Real") run!(ho_err)
     @test minimum(ho_err) == 20
     @test minimizer(ho_err) == [20, 1]
     @test length(ho_err.runs) == 2
