@@ -42,19 +42,18 @@ _reached_target(n::Int, runs) = length(runs) >= n
 
 Raise the planned total number of trials to `n` -- how you resume a run:
 `settarget!(ho, n)` then `run!(ho)` again. Only raising is allowed; lowering
-throws `ArgumentError`.
+throws `ArgumentError`. Also throws if `ho.sampler` fixes its plan to the
+sample count given at construction (e.g. a Latin Hypercube sampler) -- such
+a sampler can't respond to a new target at all.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
-    _check_target_increase(ho.n, n)
+    ho.n !== nothing && n < ho.n &&
+        throw(ArgumentError("settarget!: new target ($n) is less than the current target ($(ho.n)) -- settarget! can only raise the target"))
+    typeof(ho.sampler) in FixedPlanSampler &&
+        throw(ArgumentError("settarget!: $(typeof(ho.sampler)) fixes its plan to the sample count given at construction and can't respond to a new target"))
     ho.n = n
     @info "Hyperoptimizer target set to $(ho.n) trials"
     return ho
-end
-
-_check_target_increase(::Nothing, n::Int) = nothing
-function _check_target_increase(old::Int, n::Int)
-    n < old && throw(ArgumentError("settarget!: new target ($n) is less than the current target ($old) -- settarget! can only raise the target"))
-    return nothing
 end
 
 """
@@ -116,9 +115,13 @@ end
 Drive `ho` to completion (until `ho.n` trials have completed, the sampler is
 exhausted, or the run is interrupted), dispatching evaluations through
 `executor`. To resume a finished run, call `settarget!(ho, n)` then `run!`
-again.
+again. Warns instead of running if `ho.sampler` has a fixed plan (see
+[`FixedPlanSampler`](@ref)) and is already exhausted, since no further call
+to `run!` could ever produce more trials for it.
 """
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
+    exhausted(ho.sampler, ho) && typeof(ho.sampler) in FixedPlanSampler &&
+        @warn "$(typeof(ho.sampler)) has a fixed plan and is already exhausted; run! won't produce any more trials -- change params or use a different sampler"
     start!(executor, ho)
     try
         while true

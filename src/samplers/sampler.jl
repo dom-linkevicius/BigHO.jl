@@ -15,16 +15,17 @@ Called once before the first `ask`.
 init!(::Sampler, ctx) = nothing
 
 """
-    presample_size(sampler) -> Union{Int,Nothing}
-
-`ho.n` if this sampler needs the total sample count fixed up front, else
-`nothing`.
-"""
-presample_size(::Sampler) = nothing
-
-"""
     exhausted(sampler, ho) -> Bool
 
 Whether the sampler can no longer produce candidates.
 """
 exhausted(::Sampler, ho) = false
+
+"""
+    FixedPlanSampler
+
+Sampler types whose plan is fixed to `n` at construction (e.g. a Latin
+Hypercube design matrix), so `settarget!` can't work for them. Add a type
+here when implementing such a sampler.
+"""
+const FixedPlanSampler = Set{DataType}()
