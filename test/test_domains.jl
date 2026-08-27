@@ -22,7 +22,7 @@
     @test c isa Domain
     @test first(c.values) == 1.0
     @test last(c.values) == 5.0
-    @test step(c.values) == 1.0
+    @test c.values[2] - c.values[1] == 1.0
     @test length(c.values) == 5
 
     # dt need not evenly divide (max-min): the grid stops at or before max, never past it.
@@ -119,11 +119,7 @@
             1.0 <= v <= 5.0
         end
         # every Continuous draw must land exactly on the discretization grid
-        @test all(1:1000) do _
-            v = rand(rng, c)
-            idx = round(Int, (v - first(c.values)) / step(c.values))
-            isapprox(v, first(c.values) + idx * step(c.values); atol=1e-9)
-        end
+        @test all(rand(rng, c) in c.values for _ in 1:1000)
 
         @test rand(nom) isa Int   # no explicit rng also works
         @test rand(ord) isa Int

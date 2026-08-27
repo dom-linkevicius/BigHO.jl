@@ -1,16 +1,15 @@
 """
     history(ho) -> Vector
 
-The params tuple of every `Completed` trial, in `tell!` order. Derived from
-`ho.completed`, so it can never desync from `results(ho)`.
+The params of every `Completed` trial, in `tell!` order.
 """
 history(ho::Hyperoptimizer) = [ho.runs[i].params for i in ho.completed]
 
 """
     results(ho) -> Vector
 
-The objective value of every `Completed` trial, in `tell!` order, aligned
-index-for-index with `history(ho)`.
+The objective value of every `Completed` trial, aligned index-for-index
+with `history(ho)`.
 """
 results(ho::Hyperoptimizer) = [ho.runs[i].value for i in ho.completed]
 
@@ -19,13 +18,7 @@ _no_completed_runs_error(fname) = error("$fname is undefined: this Hyperoptimize
 """
     minimum(ho)
 
-The smallest recorded objective value among `Completed` trials (`NaN` is
-excluded as a valid optimization value -- an objective returning `NaN`
-produces a `Failed` trial, never a `Completed` one, so it's never a
-candidate here). Throws if no trial has completed yet (there is no value to
-report -- deliberately not a `NaN`/sentinel return).
-
-Hyperopt only ever minimizes; to maximize an objective `f`, minimize `-f(...)`.
+The smallest recorded objective value. Throws if no trial has completed yet.
 """
 function Base.minimum(ho::Hyperoptimizer)
     ho.best_min_id === nothing && _no_completed_runs_error("minimum")
@@ -43,14 +36,12 @@ function minimizer(ho::Hyperoptimizer)
     return collect(ho.runs[ho.best_min_id].params)
 end
 
-# Dispatches on the concrete type of `d.values` -- a `Continuous` domain is
-# the only one ever backed by an `AbstractRange`, and a level-count-only
-# Nominal/Ordinal is the only one ever backed by a `Base.OneTo`, so this
-# tells the three cases apart without needing `d.type`.
-_domain_summary(d::Domain) = _domain_summary(d.values)
-_domain_summary(values::AbstractRange) = "[$(first(values)), $(last(values))], dt=$(step(values))"
-_domain_summary(values::Base.OneTo) = "length: $(length(values))"
-_domain_summary(values::AbstractVector) = length(values) <= 3 ? string(values) : "length: $(length(values))"
+# A Continuous domain's `values` isn't necessarily evenly spaced (e.g.
+# log-spaced), so there's no single `dt` to show -- don't assume it's a
+# range, dispatch on `d.type` instead.
+_domain_summary(d::Domain) = _domain_summary(d, Val(d.type))
+_domain_summary(d::Domain, ::Val{:continuous}) = "[$(first(d.values)), $(last(d.values))], $(length(d.values)) points"
+_domain_summary(d::Domain, ::Union{Val{:nominal},Val{:ordinal}}) = length(d.values) <= 5 ? string(d.values) : "length: $(length(d.values))"
 
 function Base.show(io::IO, ho::Hyperoptimizer)
     println(io, "Hyperoptimizer with")

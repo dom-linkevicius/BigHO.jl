@@ -15,13 +15,11 @@ end
 """
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
 
-Construct an ask-tell hyperparameter optimizer. `candidates` gives one
-[`Domain`](@ref) per parameter name (e.g. `Continuous(1,5,0.1)`,
-`Nominal([true,false])`, `Ordinal([1,2,5,10])`); `objective` is called as
-`objective(params...)` (no macro, no iteration-index argument) unless it's
-wrapped in [`Stateful`](@ref). `n`, if given, bounds the total number of trials.
-
-Hyperopt only ever minimizes `objective` — to maximize, minimize `-objective(...)`.
+Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref)
+per parameter name (e.g. `Continuous(1,5,0.1)`, `Nominal([true,false])`,
+`Ordinal([1,2,5,10])`); `objective` is called as `objective(params...)`
+unless wrapped in [`Stateful`](@ref). `n`, if given, bounds the total number
+of trials. Only ever minimizes -- to maximize, minimize `-objective(...)`.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     cands = values(candidates)
@@ -42,15 +40,9 @@ _reached_target(n::Int, runs) = length(runs) >= n
 """
     settarget!(ho, n)
 
-Raise the planned total number of trials to `n`. This is how you resume a
-run: call `settarget!(ho, n)` with a larger `n` and call `run!(ho)` again --
-there is no other special "resume" feature, since all state already lives in
-`ho`.
-
-Only raising the target is supported: samplers may size internal state off
-`ho.n` (e.g. a Latin hypercube design matrix built for exactly `n` rows), so
-lowering it after trials have already been planned against the old target is
-not allowed and throws `ArgumentError`.
+Raise the planned total number of trials to `n` -- how you resume a run:
+`settarget!(ho, n)` then `run!(ho)` again. Only raising is allowed; lowering
+throws `ArgumentError`.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
     _check_target_increase(ho.n, n)
@@ -69,9 +61,7 @@ end
     ask(ho) -> RunEntry
 
 Draw the next candidate from `ho.sampler` and register a `Pending`
-[`RunEntry`](@ref). Only ever called from the single driver task in `run!` —
-workers never call this directly, which is what keeps sampler state
-single-writer by construction.
+[`RunEntry`](@ref).
 """
 function ask(ho::Hyperoptimizer)
     lock(ho.lock) do
@@ -102,19 +92,9 @@ _is_new_best(best_min_id::Int, runs, value) = value < runs[best_min_id].value
 """
     tell!(ho, entry, outcome)
 
-The sole mutation point for `ho.runs`, `ho.completed`, and the cached
-optimum. `outcome` is the objective's return value (wrapped in an
-[`ObjectiveOutcome`](@ref) by `call_objective`) or a caught exception —
-`tell!` classifies it via `apply_outcome` and never writes a `NaN`/`missing`
-placeholder for a non-`Completed` entry. (A future fault-tolerant executor's
-explicit abandonment marker is not yet a handled `outcome` type here --
-`apply_outcome` needs a matching method whenever that lands.)
-
-`RunEntry` is immutable, so "telling" means replacing `ho.runs[entry.id]`
-with the new entry `apply_outcome` returns -- looked up by id rather than
-built from the passed-in `entry` directly, since a Distributed executor
-hands back a deserialized copy, not the original reference, and the
-authoritative current state is whatever is actually stored in `ho.runs`.
+Record `outcome` (the objective's return value, or a caught exception) for
+`entry`, classifying it via [`apply_outcome`](@ref) and updating the cached
+optimum. The sole mutation point for `ho.runs`/`ho.completed`.
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
@@ -133,13 +113,10 @@ end
 """
     run!(ho; executor=Serial())
 
-Drive `ho` to completion (or until `ho.n` trials have completed, or the
-sampler is exhausted, or the run is interrupted), dispatching evaluations
-through `executor`. Swapping `executor` requires no change to `ho.sampler`
-or `ho.objective`.
-
-Resuming a previous run is not a special feature: call `settarget!(ho, n)` (or
-leave the target `nothing`) and call `run!` again on the same object.
+Drive `ho` to completion (until `ho.n` trials have completed, the sampler is
+exhausted, or the run is interrupted), dispatching evaluations through
+`executor`. To resume a finished run, call `settarget!(ho, n)` then `run!`
+again.
 """
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     start!(executor, ho)

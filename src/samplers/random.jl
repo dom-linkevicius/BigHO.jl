@@ -1,20 +1,9 @@
 """
-    RandomSampler{T<:AbstractRNG} <: Sampler
+    RandomSampler(rng=StableRNG(1))
 
-Draw each parameter by calling `rand(rng, domain)` on its `Domain` (see
-`src/domains.jl`) -- uniformly by default, or according to that `Domain`'s
-`weights` if it has any. Optionally pass an `AbstractRNG` to initialize.
-
-`ask` is only ever called from the single driver task in `run!`, so unlike
-the pre-rewrite `RandomSampler`, this holds a plain RNG — no `RemoteChannel`
-or lock is needed to share it safely across workers, because workers never
-call the sampler themselves.
-
-`RandomSampler()` defaults to a `StableRNG` (guaranteed reproducible across
-Julia versions, unlike `Random.MersenneTwister`) seeded with a fixed seed of
-`1` — reproducible by default, no hidden randomness. If you want a different
-seed, pass `RandomSampler(StableRNG(42))`; for genuinely non-reproducible
-runs, pass any other `AbstractRNG` explicitly, e.g. `RandomSampler(Random.Xoshiro())`.
+Draw each parameter via `rand(rng, domain)`. Defaults to a `StableRNG`
+seeded `1`, reproducible across Julia versions; pass a different `AbstractRNG`
+for a different seed or genuine randomness, e.g. `RandomSampler(StableRNG(42))`.
 """
 mutable struct RandomSampler{T<:Random.AbstractRNG} <: Sampler
     rng::T
