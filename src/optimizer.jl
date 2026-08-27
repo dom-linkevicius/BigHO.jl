@@ -33,9 +33,7 @@ function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=Rand
     return ho
 end
 
-reached_target(ho::Hyperoptimizer) = _reached_target(ho.n, ho.runs)
-_reached_target(::Nothing, runs) = false
-_reached_target(n::Int, runs) = length(runs) >= n
+reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
 """
     settarget!(ho, n)
@@ -76,17 +74,14 @@ function ask(ho::Hyperoptimizer)
     end
 end
 
+# No NaN handling needed here: apply_outcome already excludes NaN outcomes
+# as Failed, so a Completed entry's value is never NaN by the time it's ranked.
 function update_best!(ho::Hyperoptimizer, entry::RunEntry)
-    if _is_new_best(ho.best_min_id, ho.runs, entry.value)
+    if ho.best_min_id === nothing || entry.value < ho.runs[ho.best_min_id].value
         ho.best_min_id = entry.id
     end
     return ho
 end
-
-# No NaN handling needed here: apply_outcome already excludes NaN outcomes
-# as Failed, so a Completed entry's value is never NaN by the time it's ranked.
-_is_new_best(::Nothing, runs, value) = true
-_is_new_best(best_min_id::Int, runs, value) = value < runs[best_min_id].value
 
 """
     tell!(ho, entry, outcome)
