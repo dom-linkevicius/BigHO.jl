@@ -7,17 +7,17 @@
     ho = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Levels([true, false]), c=Levels(randn(100))); n=10)
     show(devnull, ho)
     for _ in 1:10
-        trial = ask(ho)
-        println(trial.id, "\t", trial.params)
+        entry = ask(ho)
+        println(entry.id, "\t", entry.params)
     end
-    @test length(ho.trials) == 10
+    @test length(ho.runs) == 10
     show(devnull, ho)
 
     ho2 = Hyperoptimizer(nothing, (a=Continuous(1, 2, 1 / 49), b=Levels([true, false]), c=Levels(randn(100))); n=10)
-    trials = [ask(ho2) for _ in 1:10]
-    @test length(trials) == 10
-    @test length(ho2.trials) == 10
-    @test all(t -> t.params[1] in ho2.candidates[1], trials)
+    entries = [ask(ho2) for _ in 1:10]
+    @test length(entries) == 10
+    @test length(ho2.runs) == 10
+    @test all(e -> e.params[1] in ho2.candidates[1], entries)
 
     # With zero completed runs (only `ask`, never `tell!`), the optimum accessors
     # must not silently return a sentinel -- they throw instead.

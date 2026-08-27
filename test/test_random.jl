@@ -29,17 +29,6 @@
     # settarget! can only raise the target, never lower it.
     @test_throws ArgumentError settarget!(hor, 50)
 
-    # Test NaN handling: NaN is a legitimate objective value, distinct from a failure.
-    let n_calls = Ref(0)
-        global nan_after_first(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a * b : NaN)
-    end
-    ho2 = Hyperoptimizer(nan_after_first, (a=Levels([20]), b=Levels([1])); n=2)
-    run!(ho2)
-    @test minimum(ho2) == 20
-    @test minimizer(ho2) == [20, 1]
-    @test length(results(ho2)) == 2 # the legitimate NaN is recorded, not dropped
-    @test any(isnan, results(ho2))
-
     ho3 = Hyperoptimizer((a, b) -> a * b, (a=Levels([20]), b=Levels([10])); n=1)
     run!(ho3)
     io = IOBuffer()

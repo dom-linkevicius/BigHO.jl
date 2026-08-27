@@ -4,7 +4,7 @@
 The params tuple of every `Completed` trial, in `tell!` order. Derived from
 `ho.completed`, so it can never desync from `results(ho)`.
 """
-history(ho::Hyperoptimizer) = [ho.trials[i].params for i in ho.completed]
+history(ho::Hyperoptimizer) = [ho.runs[i].params for i in ho.completed]
 
 """
     results(ho) -> Vector
@@ -12,24 +12,24 @@ history(ho::Hyperoptimizer) = [ho.trials[i].params for i in ho.completed]
 The objective value of every `Completed` trial, in `tell!` order, aligned
 index-for-index with `history(ho)`.
 """
-results(ho::Hyperoptimizer) = [ho.results[i].value for i in ho.completed]
+results(ho::Hyperoptimizer) = [ho.runs[i].value for i in ho.completed]
 
 _no_completed_runs_error(fname) = error("$fname is undefined: this Hyperoptimizer has no completed runs")
 
 """
     minimum(ho)
 
-The smallest recorded objective value among `Completed` trials (`NaN` never
-wins — a legitimate `NaN` return is recorded but excluded from ranking).
-Throws if no trial has completed yet (there is no value to report — this is
-deliberately not a `NaN`/sentinel return, since a completed trial may
-legitimately have recorded `NaN` as its value).
+The smallest recorded objective value among `Completed` trials (`NaN` is
+excluded as a valid optimization value -- an objective returning `NaN`
+produces a `Failed` trial, never a `Completed` one, so it's never a
+candidate here). Throws if no trial has completed yet (there is no value to
+report -- deliberately not a `NaN`/sentinel return).
 
 Hyperopt only ever minimizes; to maximize an objective `f`, minimize `-f(...)`.
 """
 function Base.minimum(ho::Hyperoptimizer)
     ho.best_min_id === nothing && _no_completed_runs_error("minimum")
-    return ho.results[ho.best_min_id].value
+    return ho.runs[ho.best_min_id].value
 end
 
 """
@@ -40,7 +40,7 @@ completed yet.
 """
 function minimizer(ho::Hyperoptimizer)
     ho.best_min_id === nothing && _no_completed_runs_error("minimizer")
-    return collect(ho.trials[ho.best_min_id].params)
+    return collect(ho.runs[ho.best_min_id].params)
 end
 
 _domain_summary(d::Continuous) = "[$(d.min), $(d.max)], dt=$(d.dt)"

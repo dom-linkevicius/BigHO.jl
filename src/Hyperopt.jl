@@ -1,7 +1,8 @@
 module Hyperopt
 
 export Hyperoptimizer, ask, tell!, run!, settarget!
-export Trial, Result, TrialStatus, Completed, Failed, Abandoned
+export RunEntry, RunStatus, Pending, Completed, Failed, Abandoned
+export Stateful, call_objective, apply_outcome
 export Sampler, RandomSampler, on_tell!, init!, presample_size, exhausted
 export AbstractExecutor, Serial, submit!, poll, capacity, start!, shutdown!
 export minimizer, history, results, printmin, warn_on_boundary

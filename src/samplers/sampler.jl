@@ -1,14 +1,15 @@
 abstract type Sampler end
 
 """
-    on_tell!(sampler, trial, result)
+    on_tell!(sampler, entry)
 
-Feedback hook: called once per `tell!`, after `result` has been recorded, so
-a sampler can update whatever aggregate state it maintains internally
-(e.g. Hyperband's rung bookkeeping, BOHB's KDEs). Samplers never read
-`ho.history`/`ho.results` directly — this hook is their only feedback channel.
+Feedback hook: called once per `tell!`, after `entry::RunEntry`'s result
+fields have been recorded, so a sampler can update whatever aggregate state
+it maintains internally (e.g. Hyperband's rung bookkeeping, BOHB's KDEs).
+Samplers never read `ho.history`/`ho.results`/`ho.runs` directly — this hook
+is their only feedback channel.
 """
-on_tell!(::Sampler, trial, result) = nothing
+on_tell!(::Sampler, entry) = nothing
 
 """
     init!(sampler, ctx::AskContext)
