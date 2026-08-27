@@ -6,6 +6,11 @@ thread, on a Distributed worker, ...) and hands outcomes back via `poll`.
 Concrete executors must implement `start!`, `shutdown!`, `submit!`, `poll`,
 and `capacity` -- none of these have a default, so a missing one is a loud
 `MethodError` rather than a silent no-op.
+
+`run!` calls `poll` in a tight loop with no yielding of its own, so `poll`
+must block until at least one result is ready whenever something is still
+in flight (like `Base.take!` on a `Channel`), rather than returning an empty
+list -- otherwise `run!` busy-spins instead of idling while work completes.
 """
 abstract type AbstractExecutor end
 
