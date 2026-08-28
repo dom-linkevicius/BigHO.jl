@@ -22,6 +22,7 @@ unless wrapped in [`Stateful`](@ref). `n`, if given, bounds the total number
 of trials. Only ever minimizes -- to maximize, minimize `-objective(...)`.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
+    n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
     cands = values(candidates)
     all(d -> d isa Domain, cands) ||
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
@@ -47,7 +48,7 @@ a sampler can't respond to a new target at all.
 function settarget!(ho::Hyperoptimizer, n::Int)
     ho.n !== nothing && n < ho.n &&
         throw(ArgumentError("settarget!: new target ($n) is less than the current target ($(ho.n)) -- settarget! can only raise the target"))
-    typeof(ho.sampler) in FixedPlanSampler &&
+    ho.sampler isa FixedPlanSampler &&
         throw(ArgumentError("settarget!: $(typeof(ho.sampler)) fixes its plan to the sample count given at construction and can't respond to a new target"))
     ho.n = n
     @info "Hyperoptimizer target set to $(ho.n) trials"
@@ -115,7 +116,7 @@ again. Warns instead of running if `ho.sampler` has a fixed plan (see
 to `run!` could ever produce more trials for it.
 """
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
-    exhausted(ho.sampler, ho) && typeof(ho.sampler) in FixedPlanSampler &&
+    exhausted(ho.sampler, ho) && ho.sampler isa FixedPlanSampler &&
         @warn "$(typeof(ho.sampler)) has a fixed plan and is already exhausted; run! won't produce any more trials -- change params or use a different sampler"
     start!(executor, ho)
     try

@@ -144,6 +144,16 @@
         @test_throws ArgumentError Ordinal(3; weights=[1.0, 2.0, 3.0, 4.0])
         @test_throws ArgumentError Continuous(1, 5, 1; weights=[1.0, 2.0])
 
+        # All-zero weights are rejected too -- StatsBase.sample doesn't
+        # validate this itself, so without this check it would silently
+        # degrade into always drawing the same (first) candidate forever,
+        # rather than throwing at construction like every other invalid
+        # weights vector does.
+        @test_throws ArgumentError Nominal(4; weights=[0.0, 0.0, 0.0, 0.0])
+        # Negative weights are rejected too -- StatsBase.Weights has no
+        # well-defined meaning for them.
+        @test_throws ArgumentError Nominal(4; weights=[-1.0, 2.0, 0.0, 0.0])
+
         # Also rejected when constructing a Domain directly (bypassing
         # Nominal/Ordinal/Continuous) -- the check lives on Domain's own
         # inner constructor precisely so no construction path can skip it.
@@ -174,9 +184,10 @@
         @test all(rand(rng, nom_fns) in (tanh, exp, identity) for _ in 1:100)
         @test all(rand(rng, nom_fns) in nom_fns for _ in 1:100)
 
-        # log-spaced (non-uniform, but genuinely increasing) values: only
-        # representable via Ordinal's values form, not Continuous.
-        logspaced = Ordinal(exp10.(LinRange(-1, 3, 50)))
+        # log-spaced (non-uniform, but genuinely increasing) numeric values --
+        # Continuous, not Ordinal, since this is a numeric parameter with a
+        # relatively high point count.
+        logspaced = Continuous(exp10.(LinRange(-1, 3, 50)))
         @test all(rand(rng, logspaced) in logspaced for _ in 1:200)
 
         # Domains constructed from a plain level count (no values) don't carry actual
@@ -190,6 +201,15 @@
         @test 3.0 in c
         @test 3.5 ∉ c   # c has dt=1, so 3.5 isn't on the grid
         @test 6.0 ∉ c   # out of [min,max]
+
+        # Regression: membership is exact equality against d.values, not an
+        # isapprox with some fixed tolerance -- a fixed tolerance would be
+        # wrong for small-magnitude domains (e.g. tiny learning rates), where
+        # the true grid spacing can be far smaller than any fixed absolute
+        # tolerance floor, making an off-grid midpoint falsely test as a member.
+        tiny = Continuous(exp10.(range(-10, -5, length=50)))
+        midpoint = (tiny.values[1] + tiny.values[2]) / 2
+        @test midpoint ∉ tiny
 
         # `missing in d` is always a definite Bool (false), never Julia's
         # usual 3-valued `missing`-propagating comparison result -- for every

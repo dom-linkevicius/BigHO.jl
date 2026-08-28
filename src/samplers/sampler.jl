@@ -33,7 +33,10 @@ function exhausted end
     FixedPlanSampler
 
 Sampler types whose plan is fixed to `n` at construction (e.g. a Latin
-Hypercube design matrix), so `settarget!` can't work for them. Add a type
-here when implementing such a sampler.
+Hypercube design matrix), so `settarget!` can't work for them. `Union{}` by
+default (matches no sampler); redefine to include a type here (e.g.
+`Union{LHSampler}`) when implementing such a sampler -- a bare parametric
+type as a `Union` member correctly matches any instantiation of it via
+`isa`, unlike a `Set{DataType}` registry, which can't even hold one.
 """
-const FixedPlanSampler = Set{DataType}()
+const FixedPlanSampler = Union{}

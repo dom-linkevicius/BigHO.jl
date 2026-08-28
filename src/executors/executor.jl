@@ -17,12 +17,15 @@ abstract type AbstractExecutor end
 """
     safe_call(f, params, pre_artefact) -> value_or_exception
 
-Calls the objective, catching any thrown exception and returning it instead.
+Calls the objective, catching any thrown exception and returning it instead
+-- except `InterruptException`, which propagates so `run!` can stop
+gracefully instead of recording the interruption as a failed trial.
 """
 function safe_call(f, params, pre_artefact)
     try
         call_objective(f, params, pre_artefact)
     catch e
+        e isa InterruptException && rethrow()
         e
     end
 end

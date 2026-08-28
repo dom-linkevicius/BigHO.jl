@@ -17,6 +17,8 @@ struct Domain
             throw(ArgumentError("type must be :nominal, :ordinal, or :continuous, got $(repr(type))"))
         weights === nothing || length(weights) == length(values) ||
             throw(ArgumentError("weights must have length $(length(values)) (one per level), got $(length(weights))"))
+        weights === nothing || (all(>=(0), weights) && any(>(0), weights)) ||
+            throw(ArgumentError("weights must be non-negative, with at least one strictly positive; got $(count(<(0), weights)) negative and $(count(==(0), weights)) zero, out of $(length(weights))"))
         return new(type, values, weights)
     end
 end
@@ -31,7 +33,6 @@ Base.rand(d::Domain) = rand(DEFAULT_DOMAIN_RNG, d)
 # `Vector{Float64}`, even though the field's static type is a `Union`)
 # instead of branching on it -- each method below is fully specialized for
 # its case.
-_draw(rng::Random.AbstractRNG, d::Domain) = _draw(rng, d, d.weights)
 _draw(rng::Random.AbstractRNG, d::Domain, ::Nothing) = rand(rng, d.values)
 _draw(rng::Random.AbstractRNG, d::Domain, weights::Vector{Float64}) = sample(rng, d.values, Weights(weights))
 
@@ -40,36 +41,19 @@ _draw(rng::Random.AbstractRNG, d::Domain, weights::Vector{Float64}) = sample(rng
 
 Draw a candidate from `d`, uniformly unless `d.weights` was given.
 """
-Base.rand(rng::Random.AbstractRNG, d::Domain) = _draw(rng, d)
+Base.rand(rng::Random.AbstractRNG, d::Domain) = _draw(rng, d, d.weights)
 
 """
     x in d::Domain
 
 Whether `x` is one of `d`'s candidate values. Always a `Bool`, even for
-`x === missing`.
+`x === missing`. `d.values` is the exact, already-materialized list of
+candidates for every domain kind (never recomputed via arithmetic at check
+time), so this is always plain equality -- no floating-point tolerance
+involved, or needed.
 """
-Base.in(x, d::Domain) = _in(x, d, Val(d.type))
+Base.in(x, d::Domain) = x in d.values
 Base.in(::Missing, ::Domain) = false
-
-_in(x, d::Domain, ::Union{Val{:nominal},Val{:ordinal}}) = x in d.values
-_in(x, d::Domain, ::Val{:continuous}) = _in_continuous(x, d)
-
-# `d.values` is sorted but not necessarily evenly spaced (e.g. a log-spaced
-# Continuous), so membership can't be computed by arithmetic (`step`) the
-# way an evenly-spaced grid's could -- instead, binary-search to the
-# insertion point and isapprox-check the (at most two) neighboring
-# candidates, tolerance scaled to each candidate's own magnitude since
-# there's no single grid spacing to scale by.
-_in_continuous(x, ::Domain) = false # non-Real x can never be a grid point
-function _in_continuous(x::Real, d::Domain)
-    r = d.values
-    (first(r) <= x <= last(r)) || return false
-    i = searchsortedfirst(r, x)
-    _tol(v) = 1e-9 * max(1, abs(v))
-    (i <= length(r) && isapprox(x, r[i]; atol=_tol(r[i]))) && return true
-    (i > 1 && isapprox(x, r[i-1]; atol=_tol(r[i-1]))) && return true
-    return false
-end
 
 # Shared construct logic for the standard "levels only" vs "explicit values
 # list" constructor pair, common to Nominal and Ordinal. No need to
