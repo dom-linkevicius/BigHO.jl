@@ -1,4 +1,4 @@
-using Test, Random, Logging
+using Test, Random, Logging, Distributed
 using StableRNGs: StableRNG
 using BigHO
 
@@ -9,10 +9,11 @@ using BigHO
 # CI, which doesn't need to re-verify non-threading concerns under multiple
 # Julia threads -- can still narrow it down explicitly via test_args.
 const CONCERNS = Dict(
-    "basic" => ["basic/test_domains.jl", "basic/test_artefacts.jl", "basic/test_failures.jl", "basic/test_manual.jl"],
-    "samplers" => ["samplers/test_random.jl"],
-    "serial" => ["executors/test_serial.jl"],
-    "threaded" => ["executors/test_threaded.jl"],
+    "basic" => ["basic/domains.jl", "basic/artefacts.jl", "basic/failures.jl", "basic/manual.jl"],
+    "samplers" => ["samplers/random.jl"],
+    "serial" => ["executors/serial.jl"],
+    "threaded" => ["executors/threaded.jl"],
+    "distributed" => ["executors/distributed_queue.jl", "executors/equivalence.jl"],
 )
 
 concerns_to_run = isempty(ARGS) ? sort(collect(keys(CONCERNS))) : ARGS

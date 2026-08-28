@@ -62,49 +62,6 @@
     BigHO.shutdown!(ex_shutdown)
     @test finished[]
 
-    # Executor-agnostic correctness: the SAME setup, run through Serial vs
-    # Threaded, must reach the identical final result. Both draw identically
-    # because RandomSampler()'s default constructor builds a fresh
-    # StableRNG(1) each time it's called (src/samplers/random.jl) -- not
-    # because of any shared/global RNG state. ask!'s draw sequence never
-    # depends on which executor evaluates the objective, and
-    # update_best!'s comparison-based tracking is order-independent, so only
-    # the *order* trials complete in should ever differ between executors --
-    # never the final outcome.
-    f(a, b) = (a - 7)^2 + (b - 3)^2
-    domains = (a=Ordinal(0:10), b=Ordinal(0:10))
-
-    ho_serial = Hyperoptimizer(f, domains; n=500)
-    run!(ho_serial; executor=Serial())
-
-    ho_threaded = Hyperoptimizer(f, domains; n=500)
-    run!(ho_threaded; executor=Threaded(8))
-
-    # history/results are ordered by tell! (completion) order, which -- unlike
-    # the draw sequence itself -- genuinely can differ under Threaded's real
-    # concurrent timing, so compare as multisets, not ordered sequences.
-    @test sort(history(ho_serial)) == sort(history(ho_threaded))
-    @test sort(results(ho_serial)) == sort(results(ho_threaded))
-    @test minimum(ho_serial) == minimum(ho_threaded)
-    @test minimizer(ho_serial) == minimizer(ho_threaded)
-
-    # Same, but with a mix of Completed and Failed outcomes -- the happy-path
-    # equivalence above never fails a trial, so it can't catch a future race
-    # that misattributes a Failed outcome to the wrong entry, or vice versa,
-    # under concurrent completion timing.
-    h(a) = a == 5 ? error("boom") : a
-    domain = (a=Ordinal(1:10),)
-
-    ho_serial_mixed = Hyperoptimizer(h, domain; n=200)
-    run!(ho_serial_mixed; executor=Serial())
-
-    ho_threaded_mixed = Hyperoptimizer(h, domain; n=200)
-    run!(ho_threaded_mixed; executor=Threaded(8))
-
-    outcome_by_params(ho) = Dict(e.params => e.status for e in ho.runs)
-    @test outcome_by_params(ho_serial_mixed) == outcome_by_params(ho_threaded_mixed)
-    @test BigHO.Failed in values(outcome_by_params(ho_serial_mixed)) # sanity: the mix actually includes a failure
-
     # Every trial gets told exactly once, with the outcome correctly
     # attributed to its own entry, regardless of completion order under real
     # concurrency -- the thing that's actually at risk in a threaded executor

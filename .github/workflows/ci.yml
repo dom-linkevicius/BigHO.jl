@@ -8,7 +8,7 @@ jobs:
       matrix:
         julia-version: ['1.11', '1']
         os: [ubuntu-latest, windows-latest, macOS-latest]
-        concern: [basic, samplers, serial, threaded]
+        concern: [basic, samplers, serial, threaded, distributed]
     # GitHub-hosted runners have multiple CPUs -- JULIA_NUM_THREADS=auto lets
     # Julia use them so the threaded concern actually exercises real
     # multithreading. Every other concern is pinned to 1 thread explicitly,
