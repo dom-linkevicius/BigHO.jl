@@ -13,7 +13,7 @@ struct LoggingWrapper{F}
     f::F
     log::Vector{Any}
 end
-Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pre_artefact); w.f(params...))
+BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pre_artefact); w.f(params...))
 
 @testset "Stateful objectives / artefacts" begin
     @info "Testing Stateful objective artefact threading"
@@ -70,7 +70,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     ho_tuple = Hyperoptimizer((a, b) -> (a + b, "diagnostic"), (a=Nominal([1]), b=Nominal([2])); n=1)
     @test_logs (:warn, r"non-Real") run!(ho_tuple)
     @test length(results(ho_tuple)) == 0
-    @test ho_tuple.runs[1].status == Hyperopt.Failed
+    @test ho_tuple.runs[1].status == BigHO.Failed
     @test ho_tuple.runs[1].post_artefact === nothing # untouched -- this objective was never Stateful
 
     # Regression: a plain objective returning `missing` is excluded as
@@ -83,5 +83,5 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     @test_logs (:warn, r"non-Real") run!(ho_missing)
     @test minimum(ho_missing) == 5.0
     @test length(results(ho_missing)) == 1
-    @test ho_missing.runs[2].status == Hyperopt.Failed
+    @test ho_missing.runs[2].status == BigHO.Failed
 end

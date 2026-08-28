@@ -2,24 +2,24 @@
     @info "Testing Domain primitives"
 
     @testset "kind" begin
-        @test Nominal(4) isa Hyperopt.Domain
-        @test Ordinal(3) isa Hyperopt.Domain
-        @test Continuous(1, 5, 1) isa Hyperopt.Domain
+        @test Nominal(4) isa BigHO.Domain
+        @test Ordinal(3) isa BigHO.Domain
+        @test Continuous(1, 5, 1) isa BigHO.Domain
         @test Nominal(4).type == :nominal
         @test Ordinal(3).type == :ordinal
         @test Continuous(1, 5, 1).type == :continuous
     end
 
     nom = Nominal(4)
-    @test nom isa Hyperopt.Domain
+    @test nom isa BigHO.Domain
     @test length(nom.values) == 4
 
     ord = Ordinal(3)
-    @test ord isa Hyperopt.Domain
+    @test ord isa BigHO.Domain
     @test length(ord.values) == 3
 
     c = Continuous(1, 5, 1) # dt=1 -> grid points 1,2,3,4,5
-    @test c isa Hyperopt.Domain
+    @test c isa BigHO.Domain
     @test first(c.values) == 1.0
     @test last(c.values) == 5.0
     @test c.values[2] - c.values[1] == 1.0
@@ -39,7 +39,7 @@
         # value, not concrete container type, so a Vector-backed and a
         # range-backed Continuous with the same points compare equal.
         c_vals = Continuous(1:1:5)
-        @test c_vals isa Hyperopt.Domain
+        @test c_vals isa BigHO.Domain
         @test c_vals.type == :continuous
         @test c_vals.values == c.values
 
@@ -56,7 +56,7 @@
         # itself (relevant to future density-estimation machinery), not grid
         # uniformity.
         logspaced = Continuous(exp10.(LinRange(-1, 3, 50)))
-        @test logspaced isa Hyperopt.Domain
+        @test logspaced isa BigHO.Domain
         @test logspaced.type == :continuous
         @test length(logspaced.values) == 50
         @test all(rand(StableRNG(1), logspaced) in logspaced for _ in 1:200)
@@ -157,8 +157,8 @@
         # Also rejected when constructing a Domain directly (bypassing
         # Nominal/Ordinal/Continuous) -- the check lives on Domain's own
         # inner constructor precisely so no construction path can skip it.
-        @test_throws ArgumentError Hyperopt.Domain(:nominal, [1, 2, 3], [1.0])
-        @test_throws ArgumentError Hyperopt.Domain(:bogus, [1, 2, 3], nothing)
+        @test_throws ArgumentError BigHO.Domain(:nominal, [1, 2, 3], [1.0])
+        @test_throws ArgumentError BigHO.Domain(:bogus, [1, 2, 3], nothing)
 
         # An empty candidate list is rejected at construction -- otherwise it
         # would silently build a Domain that only throws a confusing,
@@ -166,7 +166,7 @@
         @test_throws ArgumentError Nominal(0)
         @test_throws ArgumentError Ordinal(0)
         @test_throws ArgumentError Continuous(Float64[])
-        @test_throws ArgumentError Hyperopt.Domain(:nominal, [], nothing)
+        @test_throws ArgumentError BigHO.Domain(:nominal, [], nothing)
 
         # Continuous's grid point count is derived from `length(min:dt:max)`,
         # not a hand-rolled floor((max-min)/dt)+1 formula -- Julia's range
@@ -176,7 +176,7 @@
         c_dec = Continuous(0.0, 0.3, 0.1)
         @test length(c_dec.values) == 4
         @test_throws ArgumentError Continuous(0.0, 0.3, 0.1; weights=[1.0, 1.0, 1.0])
-        @test Continuous(0.0, 0.3, 0.1; weights=[1.0, 1.0, 1.0, 1.0]) isa Hyperopt.Domain
+        @test Continuous(0.0, 0.3, 0.1; weights=[1.0, 1.0, 1.0, 1.0]) isa BigHO.Domain
     end
 
     @testset "values-based construction (Domain replaces a plain candidate array)" begin

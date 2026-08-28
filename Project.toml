@@ -1,7 +1,7 @@
-name = "Hyperopt"
+name = "BigHO"
 uuid = "93e5fe13-2215-51db-baaf-2e9a34fb2712"
 version = "0.5.6"
-author = ["Fredrik Bagge Carlson <baggepinnen@gmail.com>"]
+author = ["Domas Linkevicius"]
 
 [deps]
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
