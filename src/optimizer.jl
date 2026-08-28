@@ -115,20 +115,22 @@ again. Warns instead of running if `ho.sampler` has a fixed plan (see
 [`FixedPlanSampler`](@ref)) and is already exhausted, since no further call
 to `run!` could ever produce more trials for it.
 """
+_should_stop_asking(ho::Hyperoptimizer) = ho.done || reached_target(ho) || exhausted(ho.sampler, ho)
+
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     exhausted(ho.sampler, ho) && ho.sampler isa FixedPlanSampler &&
         @warn "$(typeof(ho.sampler)) has a fixed plan and is already exhausted; run! won't produce any more trials -- change params or use a different sampler"
     start!(executor, ho)
     try
         while true
-            while !ho.done && !reached_target(ho) && !exhausted(ho.sampler, ho) && capacity(executor) > 0
+            while !_should_stop_asking(ho) && capacity(executor) > 0
                 entry = ask(ho)
                 submit!(executor, entry, ho.objective)
             end
             for (entry, outcome) in poll(executor)
                 tell!(ho, entry, outcome)
             end
-            (ho.done || reached_target(ho) || exhausted(ho.sampler, ho)) && ho.n_pending == 0 && break
+            _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
     catch e
         _handle_run_error(e, ho)
