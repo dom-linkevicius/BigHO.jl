@@ -1,6 +1,6 @@
 using Test, Random, Logging
 using StableRNGs: StableRNG
-using Hyperopt
+using BigHO
 
 # Run only the concern(s) named in ARGS -- e.g. `julia test/runtests.jl basic
 # samplers` or `Pkg.test(; test_args=["threaded"])`. With no ARGS at all (e.g.

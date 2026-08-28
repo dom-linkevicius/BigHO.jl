@@ -6,26 +6,26 @@
 
     # capacity bookkeeping: consumed by submit!, restored by poll.
     ex = Threaded(2)
-    Hyperopt.start!(ex, nothing)
-    @test Hyperopt.capacity(ex) == 2
-    entry1 = Hyperopt.RunEntry(1, (a=1,))
-    Hyperopt.submit!(ex, entry1, a -> a)
-    @test Hyperopt.capacity(ex) == 1
-    entry2 = Hyperopt.RunEntry(2, (a=2,))
-    Hyperopt.submit!(ex, entry2, a -> a)
-    @test Hyperopt.capacity(ex) == 0
+    BigHO.start!(ex, nothing)
+    @test BigHO.capacity(ex) == 2
+    entry1 = BigHO.RunEntry(1, (a=1,))
+    BigHO.submit!(ex, entry1, a -> a)
+    @test BigHO.capacity(ex) == 1
+    entry2 = BigHO.RunEntry(2, (a=2,))
+    BigHO.submit!(ex, entry2, a -> a)
+    @test BigHO.capacity(ex) == 0
     # poll blocks for the first result but isn't guaranteed to drain both in
     # one call (the second trivial task may not have finished yet under
     # system load) -- call again rather than assume a single call suffices,
     # matching how run! itself actually consumes poll() (in a loop). A second
     # call is always safe: once in_flight hits 0 it returns empty immediately
     # rather than blocking.
-    out = Hyperopt.poll(ex)
-    append!(out, Hyperopt.poll(ex))
+    out = BigHO.poll(ex)
+    append!(out, BigHO.poll(ex))
     @test length(out) == 2
-    @test Hyperopt.capacity(ex) == 2
+    @test BigHO.capacity(ex) == 2
     @test Set(e.id for (e, _) in out) == Set([1, 2])
-    Hyperopt.shutdown!(ex)
+    BigHO.shutdown!(ex)
 
     # Regression: poll() must not discard already-collected results from
     # earlier in the same batch just because a later item in that batch is an
@@ -35,19 +35,19 @@
     # deterministically force multiple results and an interrupt into the same
     # poll() batch.
     ex_batch = Threaded(4)
-    Hyperopt.start!(ex_batch, nothing)
-    entryA = Hyperopt.RunEntry(1, (a=1,))
-    entryB = Hyperopt.RunEntry(2, (a=2,))
-    entryC = Hyperopt.RunEntry(3, (a=3,))
-    put!(ex_batch.results, (entryA, Hyperopt.ObjectiveOutcome(10, nothing)))
+    BigHO.start!(ex_batch, nothing)
+    entryA = BigHO.RunEntry(1, (a=1,))
+    entryB = BigHO.RunEntry(2, (a=2,))
+    entryC = BigHO.RunEntry(3, (a=3,))
+    put!(ex_batch.results, (entryA, BigHO.ObjectiveOutcome(10, nothing)))
     put!(ex_batch.results, (entryB, InterruptException()))
-    put!(ex_batch.results, (entryC, Hyperopt.ObjectiveOutcome(30, nothing)))
+    put!(ex_batch.results, (entryC, BigHO.ObjectiveOutcome(30, nothing)))
     ex_batch.in_flight = 3
-    out_batch = Hyperopt.poll(ex_batch)
+    out_batch = BigHO.poll(ex_batch)
     @test Set(e.id for (e, _) in out_batch) == Set([1, 3]) # both good results preserved, not discarded
-    @test Hyperopt.capacity(ex_batch) == 0 # a pending exception blocks further submission immediately
-    @test_throws InterruptException Hyperopt.poll(ex_batch) # deferred throw happens on the NEXT call
-    Hyperopt.shutdown!(ex_batch)
+    @test BigHO.capacity(ex_batch) == 0 # a pending exception blocks further submission immediately
+    @test_throws InterruptException BigHO.poll(ex_batch) # deferred throw happens on the NEXT call
+    BigHO.shutdown!(ex_batch)
 
     # Regression: shutdown! must actually wait for outstanding tasks to
     # finish, not just stop tracking them -- otherwise a trial still running
@@ -56,10 +56,10 @@
     # (rather than via run!) for a deterministic outcome regardless of
     # RandomSampler's draw order.
     ex_shutdown = Threaded(4)
-    Hyperopt.start!(ex_shutdown, nothing)
+    BigHO.start!(ex_shutdown, nothing)
     finished = Ref(false)
-    Hyperopt.submit!(ex_shutdown, Hyperopt.RunEntry(1, (a=1,)), _ -> (sleep(0.3); finished[] = true; 1))
-    Hyperopt.shutdown!(ex_shutdown)
+    BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,)), _ -> (sleep(0.3); finished[] = true; 1))
+    BigHO.shutdown!(ex_shutdown)
     @test finished[]
 
     # Executor-agnostic correctness: the SAME setup, run through Serial vs
@@ -103,7 +103,7 @@
 
     outcome_by_params(ho) = Dict(e.params => e.status for e in ho.runs)
     @test outcome_by_params(ho_serial_mixed) == outcome_by_params(ho_threaded_mixed)
-    @test Hyperopt.Failed in values(outcome_by_params(ho_serial_mixed)) # sanity: the mix actually includes a failure
+    @test BigHO.Failed in values(outcome_by_params(ho_serial_mixed)) # sanity: the mix actually includes a failure
 
     # Every trial gets told exactly once, with the outcome correctly
     # attributed to its own entry, regardless of completion order under real
@@ -115,7 +115,7 @@
     ho = Hyperoptimizer(a -> a^2, (a=Continuous(1, 500, 1),); n=500)
     run!(ho; executor=Threaded(8))
     @test length(ho.runs) == 500
-    @test all(e -> e.status == Hyperopt.Completed, ho.runs) # none lost/left Pending
+    @test all(e -> e.status == BigHO.Completed, ho.runs) # none lost/left Pending
     @test all(e -> e.value == e.params.a^2, ho.runs) # each outcome attributed to the right entry
 
     # Failure handling goes through the same safe_call/finalize_entry pipeline
@@ -128,7 +128,7 @@
     @test_logs (:warn, r"non-Real") run!(ho_err; executor=ex_err)
     @test length(results(ho_err)) == 2
     @test length(ho_err.runs) == 3
-    @test count(e -> e.status == Hyperopt.Failed, ho_err.runs) == 1
+    @test count(e -> e.status == BigHO.Failed, ho_err.runs) == 1
 
     # Graceful interrupt under real concurrency: an InterruptException thrown
     # inside a spawned task must not deadlock poll() waiting forever for a

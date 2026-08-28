@@ -5,16 +5,16 @@
     # immediately -- unlike Threaded, nothing is ever actually "in flight"
     # from Serial's perspective.
     ex = Serial()
-    Hyperopt.start!(ex, nothing)
-    @test Hyperopt.capacity(ex) == 1
-    entry = Hyperopt.RunEntry(1, (a=1,))
-    Hyperopt.submit!(ex, entry, a -> a)
-    @test Hyperopt.capacity(ex) == 0 # one already-completed result waiting to be polled
-    out = Hyperopt.poll(ex)
+    BigHO.start!(ex, nothing)
+    @test BigHO.capacity(ex) == 1
+    entry = BigHO.RunEntry(1, (a=1,))
+    BigHO.submit!(ex, entry, a -> a)
+    @test BigHO.capacity(ex) == 0 # one already-completed result waiting to be polled
+    out = BigHO.poll(ex)
     @test length(out) == 1
     @test out[1][1].id == 1
-    @test Hyperopt.capacity(ex) == 1 # draining the buffer frees capacity back up
-    Hyperopt.shutdown!(ex)
+    @test BigHO.capacity(ex) == 1 # draining the buffer frees capacity back up
+    BigHO.shutdown!(ex)
 
     # An InterruptException (e.g. Ctrl+C while a trial is running) must
     # propagate out of safe_call rather than being caught and recorded as a
