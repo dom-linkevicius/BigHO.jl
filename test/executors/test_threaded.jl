@@ -27,21 +27,56 @@
     @test Set(e.id for (e, _) in out) == Set([1, 2])
     Hyperopt.shutdown!(ex)
 
+    # Regression: poll() must not discard already-collected results from
+    # earlier in the same batch just because a later item in that batch is an
+    # interrupt -- it defers the throw to the NEXT call instead, so
+    # already-completed trials are never silently lost. Seeded directly
+    # (rather than via run!) since real concurrency timing can't
+    # deterministically force multiple results and an interrupt into the same
+    # poll() batch.
+    ex_batch = Threaded(4)
+    Hyperopt.start!(ex_batch, nothing)
+    entryA = Hyperopt.RunEntry(1, (a=1,))
+    entryB = Hyperopt.RunEntry(2, (a=2,))
+    entryC = Hyperopt.RunEntry(3, (a=3,))
+    put!(ex_batch.results, (entryA, Hyperopt.ObjectiveOutcome(10, nothing)))
+    put!(ex_batch.results, (entryB, InterruptException()))
+    put!(ex_batch.results, (entryC, Hyperopt.ObjectiveOutcome(30, nothing)))
+    ex_batch.in_flight = 3
+    out_batch = Hyperopt.poll(ex_batch)
+    @test Set(e.id for (e, _) in out_batch) == Set([1, 3]) # both good results preserved, not discarded
+    @test Hyperopt.capacity(ex_batch) == 0 # a pending exception blocks further submission immediately
+    @test_throws InterruptException Hyperopt.poll(ex_batch) # deferred throw happens on the NEXT call
+    Hyperopt.shutdown!(ex_batch)
+
+    # Regression: shutdown! must actually wait for outstanding tasks to
+    # finish, not just stop tracking them -- otherwise a trial still running
+    # when the run ends keeps executing invisibly in the background after the
+    # caller already got control back. Tested at the executor level directly
+    # (rather than via run!) for a deterministic outcome regardless of
+    # RandomSampler's draw order.
+    ex_shutdown = Threaded(4)
+    Hyperopt.start!(ex_shutdown, nothing)
+    finished = Ref(false)
+    Hyperopt.submit!(ex_shutdown, Hyperopt.RunEntry(1, (a=1,)), _ -> (sleep(0.3); finished[] = true; 1))
+    Hyperopt.shutdown!(ex_shutdown)
+    @test finished[]
+
     # Executor-agnostic correctness: the SAME setup, run through Serial vs
-    # Threaded with the shared domain RNG reset to the same state
-    # beforehand, must reach the identical final result. ask!'s draw sequence
-    # never depends on which executor evaluates the objective, and
+    # Threaded, must reach the identical final result. Both draw identically
+    # because RandomSampler()'s default constructor builds a fresh
+    # StableRNG(1) each time it's called (src/samplers/random.jl) -- not
+    # because of any shared/global RNG state. ask!'s draw sequence never
+    # depends on which executor evaluates the objective, and
     # update_best!'s comparison-based tracking is order-independent, so only
     # the *order* trials complete in should ever differ between executors --
     # never the final outcome.
     f(a, b) = (a - 7)^2 + (b - 3)^2
     domains = (a=Ordinal(0:10), b=Ordinal(0:10))
 
-    Random.seed!(Hyperopt.DEFAULT_DOMAIN_RNG, 1)
     ho_serial = Hyperoptimizer(f, domains; n=500)
     run!(ho_serial; executor=Serial())
 
-    Random.seed!(Hyperopt.DEFAULT_DOMAIN_RNG, 1)
     ho_threaded = Hyperoptimizer(f, domains; n=500)
     run!(ho_threaded; executor=Threaded(8))
 
@@ -52,6 +87,23 @@
     @test sort(results(ho_serial)) == sort(results(ho_threaded))
     @test minimum(ho_serial) == minimum(ho_threaded)
     @test minimizer(ho_serial) == minimizer(ho_threaded)
+
+    # Same, but with a mix of Completed and Failed outcomes -- the happy-path
+    # equivalence above never fails a trial, so it can't catch a future race
+    # that misattributes a Failed outcome to the wrong entry, or vice versa,
+    # under concurrent completion timing.
+    h(a) = a == 5 ? error("boom") : a
+    domain = (a=Ordinal(1:10),)
+
+    ho_serial_mixed = Hyperoptimizer(h, domain; n=200)
+    run!(ho_serial_mixed; executor=Serial())
+
+    ho_threaded_mixed = Hyperoptimizer(h, domain; n=200)
+    run!(ho_threaded_mixed; executor=Threaded(8))
+
+    outcome_by_params(ho) = Dict(e.params => e.status for e in ho.runs)
+    @test outcome_by_params(ho_serial_mixed) == outcome_by_params(ho_threaded_mixed)
+    @test Hyperopt.Failed in values(outcome_by_params(ho_serial_mixed)) # sanity: the mix actually includes a failure
 
     # Every trial gets told exactly once, with the outcome correctly
     # attributed to its own entry, regardless of completion order under real

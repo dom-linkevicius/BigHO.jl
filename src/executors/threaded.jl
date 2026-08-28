@@ -10,25 +10,55 @@ mutable struct Threaded <: AbstractExecutor
     max_concurrency::Int
     results::Channel{Tuple{RunEntry,Any}}
     in_flight::Int
+    pending_exception::Union{Exception,Nothing}
+    tasks::Vector{Task}
+
+    # Defining this inner constructor suppresses Julia's default positional
+    # one, which would otherwise let max_concurrency<1 bypass the outer
+    # convenience constructor's validation below entirely (e.g.
+    # Threaded(0, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Task[])).
+    function Threaded(max_concurrency::Int, results::Channel{Tuple{RunEntry,Any}}, in_flight::Int, pending_exception::Union{Exception,Nothing}, tasks::Vector{Task})
+        max_concurrency >= 1 || throw(ArgumentError("max_concurrency must be >= 1, got $max_concurrency"))
+        return new(max_concurrency, results, in_flight, pending_exception, tasks)
+    end
 end
 function Threaded(max_concurrency::Int=Threads.nthreads())
-    max_concurrency >= 1 || throw(ArgumentError("max_concurrency must be >= 1, got $max_concurrency"))
     Threads.nthreads() == 1 &&
-        @warn "Threaded executor constructed with only 1 Julia thread available; trials will run concurrently as tasks but not in true parallel -- start Julia with `--threads=N` for real concurrency"
-    return Threaded(max_concurrency, Channel{Tuple{RunEntry,Any}}(Inf), 0)
+        @warn "Threaded executor constructed with only 1 Julia thread available; trials will run concurrently as tasks but not in true parallel -- start Julia with `--threads=N` for real concurrency" maxlog = 1
+    return Threaded(max_concurrency, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Task[])
 end
 
 function start!(executor::Threaded, ho)
     executor.results = Channel{Tuple{RunEntry,Any}}(Inf)
     executor.in_flight = 0
+    executor.pending_exception = nothing
+    executor.tasks = Task[]
     return nothing
 end
 
-shutdown!(::Threaded) = nothing
+"""
+    shutdown!(executor::Threaded)
+
+Waits for every trial this executor ever spawned to actually finish -- Julia
+has no way to forcibly cancel a running task, so this is the only way to
+guarantee nothing is still executing the objective in the background once
+`run!` returns (e.g. after an interrupt stopped the run early). Any exception
+surfacing here is swallowed: every reportable outcome already went through
+the results channel: this is best-effort cleanup, not error reporting.
+"""
+function shutdown!(executor::Threaded)
+    for t in executor.tasks
+        try
+            wait(t)
+        catch
+        end
+    end
+    return nothing
+end
 
 function submit!(executor::Threaded, entry::RunEntry, f)
     executor.in_flight += 1
-    Threads.@spawn begin
+    t = Threads.@spawn begin
         try
             put!(executor.results, (entry, safe_call(f, entry.params, entry.pre_artefact)))
         catch e
@@ -40,6 +70,7 @@ function submit!(executor::Threaded, entry::RunEntry, f)
             put!(executor.results, (entry, e))
         end
     end
+    push!(executor.tasks, t)
     return nothing
 end
 
@@ -47,26 +78,36 @@ end
 # AbstractExecutor's `poll` contract); drains any others already sitting in
 # the channel so run! doesn't call back in for results that are ready now.
 function poll(executor::Threaded)
+    # A pending exception from a PREVIOUS call is thrown first, before
+    # anything else -- including before the in_flight==0 check below, since
+    # the exception can still be pending even after everything else has
+    # already been drained and told. Deferring the throw to the *next* call
+    # (rather than throwing as soon as it's found) is what lets this call's
+    # own already-collected `out` be returned normally instead of discarded:
+    # throwing mid-collection would unwind past `out` and lose every
+    # successfully-completed result gathered earlier in that same batch.
+    executor.pending_exception !== nothing && throw(executor.pending_exception)
     executor.in_flight == 0 && return Tuple{RunEntry,Any}[]
-    # An InterruptException forwarded from submit! is re-thrown here, on the
-    # driver's own call stack, where run!'s try/catch is watching for it --
-    # rethrow() wouldn't work (there's no active catch block at this point),
-    # but throw() on the same exception value raises it just as validly.
-    function take_one!()
+    function take_one!(out)
         entry, outcome = take!(executor.results)
         executor.in_flight -= 1
-        outcome isa InterruptException && throw(outcome)
-        return (entry, outcome)
+        if outcome isa InterruptException
+            executor.pending_exception = outcome
+        else
+            push!(out, (entry, outcome))
+        end
+        return out
     end
-    # Explicitly typed -- a bare `[take_one!()]` infers its element type from
-    # this specific tuple's concrete runtime type (e.g. with an ObjectiveOutcome
-    # payload), and then errors on `push!` the moment a differently-typed
-    # payload (e.g. a caught ErrorException) shows up later in the same batch.
-    out = Tuple{RunEntry,Any}[take_one!()]
+    # Explicitly typed -- a bare `Any[]` (or inferring from the first
+    # take_one!() call) infers its element type from whichever concrete
+    # runtime type shows up first (e.g. an ObjectiveOutcome payload), and
+    # then errors on `push!` the moment a differently-typed payload (e.g. a
+    # caught ErrorException) shows up later in the same batch.
+    out = take_one!(Tuple{RunEntry,Any}[])
     while executor.in_flight > 0 && isready(executor.results)
-        push!(out, take_one!())
+        take_one!(out)
     end
     return out
 end
 
-capacity(executor::Threaded) = executor.max_concurrency - executor.in_flight
+capacity(executor::Threaded) = executor.pending_exception === nothing ? executor.max_concurrency - executor.in_flight : 0

@@ -3,11 +3,11 @@ using StableRNGs: StableRNG
 using Hyperopt
 
 # Run only the concern(s) named in ARGS -- e.g. `julia test/runtests.jl basic
-# samplers` or `Pkg.test(; test_args=["threaded"])`. No default "run
-# everything" concern: threading concerns (Threaded) are pointless to
-# re-verify under every Julia thread-count configuration, so callers (CI
-# included) pick exactly the concerns that matter for a given run rather than
-# always paying for the full suite.
+# samplers` or `Pkg.test(; test_args=["threaded"])`. With no ARGS at all (e.g.
+# plain `Pkg.test()`/`] test`), run every concern, so the standard invocation
+# still works out of the box; callers that only care about a subset -- like
+# CI, which doesn't need to re-verify non-threading concerns under multiple
+# Julia threads -- can still narrow it down explicitly via test_args.
 const CONCERNS = Dict(
     "basic" => ["basic/test_domains.jl", "basic/test_artefacts.jl", "basic/test_failures.jl", "basic/test_manual.jl"],
     "samplers" => ["samplers/test_random.jl"],
@@ -15,10 +15,9 @@ const CONCERNS = Dict(
     "threaded" => ["executors/test_threaded.jl"],
 )
 
-isempty(ARGS) &&
-    error("runtests.jl needs at least one concern to run -- choose from: $(join(sort(collect(keys(CONCERNS))), ", "))")
+concerns_to_run = isempty(ARGS) ? sort(collect(keys(CONCERNS))) : ARGS
 
-for concern in ARGS
+for concern in concerns_to_run
     haskey(CONCERNS, concern) ||
         error("unknown concern \"$concern\" -- choose from: $(join(sort(collect(keys(CONCERNS))), ", "))")
     for file in CONCERNS[concern]
