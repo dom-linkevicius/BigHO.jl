@@ -3,6 +3,7 @@ module Hyperopt
 export Hyperoptimizer, run!, settarget!
 export Stateful
 export RandomSampler
+export Serial, Threaded
 export minimizer, history, results, printmin
 export Nominal, Ordinal, Continuous
 
@@ -16,6 +17,7 @@ include("samplers/sampler.jl")
 include("types.jl")
 include("executors/executor.jl")
 include("executors/serial.jl")
+include("executors/threaded.jl")
 include("optimizer.jl")
 include("samplers/random.jl")
 include("report.jl")

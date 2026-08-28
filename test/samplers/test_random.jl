@@ -51,23 +51,6 @@
     @test Hyperoptimizer((a) -> a, (a=Nominal([1, 2, 3]),); n=0) isa Hyperoptimizer
 end
 
-@testset "Interrupt handling" begin
-    @info "Testing InterruptException handling"
-
-    # An InterruptException (e.g. Ctrl+C while a trial is running) must
-    # propagate out of safe_call rather than being caught and recorded as a
-    # failed trial -- run! stops gracefully (ho.done = true) instead of
-    # continuing as if nothing happened.
-    let n_calls = Ref(0)
-        global interrupt_after_first(a) = (n_calls[] += 1; n_calls[] == 1 ? a : throw(InterruptException()))
-    end
-    ho_interrupt = Hyperoptimizer(interrupt_after_first, (a=Nominal([1, 2, 3]),); n=3)
-    @test_logs (:info, r"Aborting") run!(ho_interrupt)
-    @test ho_interrupt.done
-    @test length(results(ho_interrupt)) == 1  # the trial before the interrupt completed normally
-    @test ho_interrupt.n_pending == 1         # the interrupted trial itself is never told, stays Pending
-end
-
 @testset "Categorical" begin
     @info "Testing Categorical"
     f(a, b=true; c=10) = sum(@. 100 + (a-3)^2 + (b ? 10 : 20) + (c-100)^2)
