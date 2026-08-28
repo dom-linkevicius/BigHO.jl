@@ -87,7 +87,7 @@ call_objective(s::Stateful, params, pre_artefact) = ObjectiveOutcome(s.f(params.
 """
     AskContext(candidates, n_asked, n)
 
-Read-only context handed to a sampler on `ask`. `n_asked` is trials asked
+Read-only context handed to a sampler on `ask!`. `n_asked` is trials asked
 so far; `n` is the planned total, if any.
 """
 struct AskContext

@@ -18,7 +18,7 @@ function on_tell! end
 """
     init!(sampler, ctx::AskContext)
 
-Called once before the first `ask`.
+Called once before the first `ask!`.
 """
 function init! end
 

@@ -160,6 +160,14 @@
         @test_throws ArgumentError Hyperopt.Domain(:nominal, [1, 2, 3], [1.0])
         @test_throws ArgumentError Hyperopt.Domain(:bogus, [1, 2, 3], nothing)
 
+        # An empty candidate list is rejected at construction -- otherwise it
+        # would silently build a Domain that only throws a confusing,
+        # low-level error the first time something tries to sample it.
+        @test_throws ArgumentError Nominal(0)
+        @test_throws ArgumentError Ordinal(0)
+        @test_throws ArgumentError Continuous(Float64[])
+        @test_throws ArgumentError Hyperopt.Domain(:nominal, [], nothing)
+
         # Continuous's grid point count is derived from `length(min:dt:max)`,
         # not a hand-rolled floor((max-min)/dt)+1 formula -- Julia's range
         # length correctly counts 4 points here (0.0, 0.1, 0.2, 0.3) even

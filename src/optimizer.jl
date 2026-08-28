@@ -43,9 +43,13 @@ Raise the planned total number of trials to `n` -- how you resume a run:
 `settarget!(ho, n)` then `run!(ho)` again. Only raising is allowed; lowering
 throws `ArgumentError`. Also throws if `ho.sampler` fixes its plan to the
 sample count given at construction (e.g. a Latin Hypercube sampler) -- such
-a sampler can't respond to a new target at all.
+a sampler can't respond to a new target at all. Warns if `ho` still has
+trials pending, since changing the target while trials are in flight isn't
+synchronized against them.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
+    ho.n_pending > 0 &&
+        @warn "settarget!: $(ho.n_pending) trial(s) still pending -- changing the target while trials are in flight may race with them"
     ho.n !== nothing && n < ho.n &&
         throw(ArgumentError("settarget!: new target ($n) is less than the current target ($(ho.n)) -- settarget! can only raise the target"))
     ho.sampler isa FixedPlanSampler &&
@@ -56,14 +60,16 @@ function settarget!(ho::Hyperoptimizer, n::Int)
 end
 
 """
-    ask(ho) -> RunEntry
+    ask!(ho) -> RunEntry
 
 Draw the next candidate from `ho.sampler` and register a `Pending`
-[`RunEntry`](@ref).
+[`RunEntry`](@ref). Throws if `ho`'s sampler is exhausted, or if `ho.n` has
+already been reached -- call `settarget!` to raise it first.
 """
-function ask(ho::Hyperoptimizer)
+function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
         exhausted(ho.sampler, ho) && error("Hyperoptimizer's sampler is exhausted: no more candidates available")
+        reached_target(ho) && error("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more")
         ctx = AskContext(ho.candidates, length(ho.runs), ho.n)
         raw = ho.sampler(ctx)
         id = length(ho.runs) + 1
@@ -124,7 +130,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     try
         while true
             while !_should_stop_asking(ho) && capacity(executor) > 0
-                entry = ask(ho)
+                entry = ask!(ho)
                 submit!(executor, entry, ho.objective)
             end
             for (entry, outcome) in poll(executor)

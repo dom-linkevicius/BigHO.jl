@@ -29,6 +29,12 @@
     # settarget! can only raise the target, never lower it.
     @test_throws ArgumentError settarget!(hor, 50)
 
+    # settarget! warns (but still proceeds) if trials are still pending,
+    # since nothing synchronizes the target change against in-flight asks/tells.
+    ho_pending = Hyperoptimizer(a -> a, (a=Nominal([1, 2, 3]),); n=3)
+    Hyperopt.ask!(ho_pending)
+    @test_logs (:warn, r"pending") (:info, r"target set to 5") settarget!(ho_pending, 5)
+
     ho3 = Hyperoptimizer((a, b) -> a * b, (a=Nominal([20]), b=Nominal([10])); n=1)
     run!(ho3)
     io = IOBuffer()

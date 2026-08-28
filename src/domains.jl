@@ -15,6 +15,7 @@ struct Domain
     function Domain(type::Symbol, values::AbstractVector, weights::Union{Vector{Float64},Nothing})
         type in (:nominal, :ordinal, :continuous) ||
             throw(ArgumentError("type must be :nominal, :ordinal, or :continuous, got $(repr(type))"))
+        isempty(values) && throw(ArgumentError("values must be non-empty"))
         weights === nothing || length(weights) == length(values) ||
             throw(ArgumentError("weights must have length $(length(values)) (one per level), got $(length(weights))"))
         weights === nothing || (all(>=(0), weights) && any(>(0), weights)) ||
