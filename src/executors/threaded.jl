@@ -74,6 +74,21 @@ function submit!(executor::Threaded, entry::RunEntry, f)
     return nothing
 end
 
+# Takes one result off executor's channel into out, unless it's an
+# InterruptException, which is stashed on executor.pending_exception instead
+# (see poll below for why). Shared by both call sites in poll so they can't
+# drift out of sync with each other.
+function _take_one!(executor::Threaded, out)
+    entry, outcome = take!(executor.results)
+    executor.in_flight -= 1
+    if outcome isa InterruptException
+        executor.pending_exception = outcome
+    else
+        push!(out, (entry, outcome))
+    end
+    return out
+end
+
 # Blocks for the first result only if one is actually in flight (per
 # AbstractExecutor's `poll` contract); drains any others already sitting in
 # the channel so run! doesn't call back in for results that are ready now.
@@ -88,24 +103,14 @@ function poll(executor::Threaded)
     # successfully-completed result gathered earlier in that same batch.
     executor.pending_exception !== nothing && throw(executor.pending_exception)
     executor.in_flight == 0 && return Tuple{RunEntry,Any}[]
-    function take_one!(out)
-        entry, outcome = take!(executor.results)
-        executor.in_flight -= 1
-        if outcome isa InterruptException
-            executor.pending_exception = outcome
-        else
-            push!(out, (entry, outcome))
-        end
-        return out
-    end
     # Explicitly typed -- a bare `Any[]` (or inferring from the first
-    # take_one!() call) infers its element type from whichever concrete
+    # _take_one!() call) infers its element type from whichever concrete
     # runtime type shows up first (e.g. an ObjectiveOutcome payload), and
     # then errors on `push!` the moment a differently-typed payload (e.g. a
     # caught ErrorException) shows up later in the same batch.
-    out = take_one!(Tuple{RunEntry,Any}[])
+    out = _take_one!(executor, Tuple{RunEntry,Any}[])
     while executor.in_flight > 0 && isready(executor.results)
-        take_one!(out)
+        _take_one!(executor, out)
     end
     return out
 end
