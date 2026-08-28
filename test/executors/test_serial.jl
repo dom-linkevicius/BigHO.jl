@@ -28,4 +28,13 @@
     @test ho_interrupt.done
     @test length(results(ho_interrupt)) == 1  # the trial before the interrupt completed normally
     @test ho_interrupt.n_pending == 1         # the interrupted trial itself is never told, stays Pending
+
+    # Correctness: enough trials relative to the grid size (~500x oversampling
+    # per candidate) to find the true optimum with overwhelming probability
+    # regardless of RNG state, without depending on exact draw-position luck.
+    g(a, b) = (a - 7)^2 + (b - 3)^2
+    ho_exact = Hyperoptimizer(g, (a=Ordinal(0:10), b=Ordinal(0:10)); n=6000)
+    run!(ho_exact; executor=Serial())
+    @test minimum(ho_exact) == 0
+    @test minimizer(ho_exact) == [7, 3]
 end

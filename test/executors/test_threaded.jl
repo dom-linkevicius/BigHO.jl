@@ -27,6 +27,32 @@
     @test Set(e.id for (e, _) in out) == Set([1, 2])
     Hyperopt.shutdown!(ex)
 
+    # Executor-agnostic correctness: the SAME setup, run through Serial vs
+    # Threaded with the shared domain RNG reset to the same state
+    # beforehand, must reach the identical final result. ask!'s draw sequence
+    # never depends on which executor evaluates the objective, and
+    # update_best!'s comparison-based tracking is order-independent, so only
+    # the *order* trials complete in should ever differ between executors --
+    # never the final outcome.
+    f(a, b) = (a - 7)^2 + (b - 3)^2
+    domains = (a=Ordinal(0:10), b=Ordinal(0:10))
+
+    Random.seed!(Hyperopt.DEFAULT_DOMAIN_RNG, 1)
+    ho_serial = Hyperoptimizer(f, domains; n=500)
+    run!(ho_serial; executor=Serial())
+
+    Random.seed!(Hyperopt.DEFAULT_DOMAIN_RNG, 1)
+    ho_threaded = Hyperoptimizer(f, domains; n=500)
+    run!(ho_threaded; executor=Threaded(8))
+
+    # history/results are ordered by tell! (completion) order, which -- unlike
+    # the draw sequence itself -- genuinely can differ under Threaded's real
+    # concurrent timing, so compare as multisets, not ordered sequences.
+    @test sort(history(ho_serial)) == sort(history(ho_threaded))
+    @test sort(results(ho_serial)) == sort(results(ho_threaded))
+    @test minimum(ho_serial) == minimum(ho_threaded)
+    @test minimizer(ho_serial) == minimizer(ho_threaded)
+
     # Every trial gets told exactly once, with the outcome correctly
     # attributed to its own entry, regardless of completion order under real
     # concurrency -- the thing that's actually at risk in a threaded executor
