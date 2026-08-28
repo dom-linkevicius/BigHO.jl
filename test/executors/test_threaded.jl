@@ -65,7 +65,13 @@
     # complete well under their combined serial duration when run through
     # Threaded, since each is spawned as its own task rather than awaited one
     # at a time -- true even on a single OS thread, since `sleep`
-    # cooperatively yields.
+    # cooperatively yields. That cooperative-yielding behavior means the
+    # timing check below would still pass under a single thread without ever
+    # having exercised real Base.Threads parallelism -- the actual point of
+    # this phase (see the plan). Assert the thread count directly so that
+    # case fails loudly instead of this concern silently "passing" without
+    # having proven anything about true parallelism.
+    @test Threads.nthreads() > 1
     n_slow, delay = 8, 0.2
     ho_slow = Hyperoptimizer(_ -> (sleep(delay); 1.0), (a=Nominal(1:n_slow),); n=n_slow)
     elapsed = @elapsed run!(ho_slow; executor=Threaded(n_slow))
