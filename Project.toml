@@ -36,7 +36,7 @@ StableRNGs = "1"
 Statistics = "1"
 StatsBase = "0.34"
 ThreadPools = "1, 2"
-julia = "1.6"
+julia = "1.11"
 
 [extras]
 Optim = "429524aa-4258-5aef-a3af-852621145aeb"
