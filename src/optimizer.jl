@@ -75,7 +75,7 @@ function ask(ho::Hyperoptimizer)
     end
 end
 
-# No NaN handling needed here: apply_outcome already excludes NaN outcomes
+# No NaN handling needed here: finalize_entry already excludes NaN outcomes
 # as Failed, so a Completed entry's value is never NaN by the time it's ranked.
 function update_best!(ho::Hyperoptimizer, entry::RunEntry)
     if ho.best_min_id === nothing || entry.value < ho.runs[ho.best_min_id].value
@@ -88,12 +88,12 @@ end
     tell!(ho, entry, outcome)
 
 Record `outcome` (the objective's return value, or a caught exception) for
-`entry`, classifying it via [`apply_outcome`](@ref) and updating the cached
+`entry`, classifying it via [`finalize_entry`](@ref) and updating the cached
 optimum. The sole mutation point for `ho.runs`/`ho.completed`.
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
-        told = apply_outcome(ho.runs[entry.id], outcome)
+        told = finalize_entry(ho.runs[entry.id], outcome)
         ho.runs[told.id] = told
         ho.n_pending -= 1
         if told.status === Completed

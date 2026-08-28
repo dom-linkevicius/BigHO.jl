@@ -27,21 +27,21 @@ _with_result(entry::RunEntry, status::RunStatus, value, post_artefact) =
     RunEntry(entry.id, entry.params, entry.metadata, status, value, entry.pre_artefact, post_artefact)
 
 """
-    apply_outcome(entry::RunEntry, outcome) -> RunEntry
+    finalize_entry(entry::RunEntry, outcome) -> RunEntry
 
 Classify a raw objective outcome into a new `RunEntry`. Only a non-`NaN`
 `Real` becomes `Completed` -- `NaN`, `missing`, a thrown exception, or any
 other type all become `Failed` (with a `@warn` showing what was
 returned/thrown).
 """
-function apply_outcome(entry::RunEntry, outcome::Real)
+function finalize_entry(entry::RunEntry, outcome::Real)
     if isnan(outcome)
         @warn "Objective returned NaN; excluding this trial as failed" params = entry.params value = outcome
         return _with_result(entry, Failed, missing, entry.post_artefact)
     end
     return _with_result(entry, Completed, outcome, entry.post_artefact)
 end
-function apply_outcome(entry::RunEntry, outcome)
+function finalize_entry(entry::RunEntry, outcome)
     @warn "Objective returned a non-Real value; excluding this trial as failed" params = entry.params value = outcome
     return _with_result(entry, Failed, missing, entry.post_artefact)
 end
@@ -50,15 +50,15 @@ end
     ObjectiveOutcome(value, post_artefact)
 
 Uniform wrapper [`call_objective`](@ref) returns on normal completion, so
-[`apply_outcome`](@ref) can dispatch on this type rather than guess from
+[`finalize_entry`](@ref) can dispatch on this type rather than guess from
 the shape of whatever the objective returned.
 """
 struct ObjectiveOutcome
     value::Any
     post_artefact::Any
 end
-function apply_outcome(entry::RunEntry, outcome::ObjectiveOutcome)
-    told = apply_outcome(entry, outcome.value) # reuses whichever method matches value's type (Real -> NaN check, or the non-Real fallback)
+function finalize_entry(entry::RunEntry, outcome::ObjectiveOutcome)
+    told = finalize_entry(entry, outcome.value) # reuses whichever method matches value's type (Real -> NaN check, or the non-Real fallback)
     return _with_result(told, told.status, told.value, outcome.post_artefact)
 end
 

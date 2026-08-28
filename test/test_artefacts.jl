@@ -38,7 +38,7 @@ Hyperopt.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log,
     @test ho.runs[ho.best_min_id].post_artefact isa FakeNetwork # the winning trial's artefact is retrievable
 
     # A Stateful objective's failure modes (NaN metric, thrown exception) are
-    # handled identically to a plain objective's -- via the same apply_outcome
+    # handled identically to a plain objective's -- via the same finalize_entry
     # dispatch, since by the time it's caught the outcome is just a plain
     # value or exception either way.
     ho_nan = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> (NaN, "unused")), (a=Nominal([1]),); n=1)
