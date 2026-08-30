@@ -6,6 +6,7 @@ author = ["Domas Linkevicius"]
 [deps]
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
+JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 LatinHypercubeSampling = "a5e1c1ea-c99a-51d3-a14d-a9a37257b02d"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
@@ -25,6 +26,7 @@ ThreadPools = "b189fb0b-2eb5-4ed4-bc0c-d34c51242431"
 
 [compat]
 Distributions = "0.24, 0.25"
+JLD2 = "0.6.6"
 LatinHypercubeSampling = "1.2"
 MacroTools = "0.5"
 MultiKDE = "0.1"

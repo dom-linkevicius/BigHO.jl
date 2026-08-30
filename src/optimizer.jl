@@ -49,6 +49,11 @@ end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
+# Trials ever told an outcome (Completed/Failed/Abandoned), regardless of
+# how many separate run! calls it took to get there -- used to decide when
+# save_every worth of new trials have accumulated since the last checkpoint.
+n_told(ho::Hyperoptimizer) = length(ho.runs) - ho.n_pending
+
 """
     settarget!(ho, n)
 
@@ -129,7 +134,7 @@ function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
 end
 
 """
-    run!(ho; executor=Serial())
+    run!(ho; executor=Serial(), save_every=nothing, save_path=nothing)
 
 Drive `ho` to completion (until `ho.n` trials have completed, the sampler is
 exhausted, or the run is interrupted), dispatching evaluations through
@@ -140,10 +145,33 @@ abandoned any trials that were still in flight -- construct a new
 already has nothing to do: its target already reached (call `settarget!`
 first), or its sampler exhausted (with a fixed plan, no further call could
 ever produce more trials for it; see [`FixedPlanSampler`](@ref)).
+
+`save_path`, if given, checkpoints `ho` there (minus its objective -- see
+[`load_hyperoptimizer`](@ref)) every `save_every` trials told (any outcome,
+not just `Completed`), overwriting the same file each time. Omit
+`save_every` to only save once, when the run ends naturally (target
+reached or sampler exhausted) -- and even when `save_every` is given, one
+last checkpoint is always taken at that point too, so the file on disk
+always reflects the true end state rather than being stuck at the last
+`save_every` boundary before it. `save_every` without `save_path` is an
+error, and so is `save_path` on a `ho` whose `objective` is already
+`nothing` (checkpointing substitutes `nothing` for the objective in the
+saved file, so a real one is required to make that substitution meaningful).
+Each write is atomic (a temp file renamed over `save_path`), so a crash
+mid-write can't corrupt the last good checkpoint. Note this final save does
+not happen on interrupt (see [`OptimizerStatus`](@ref)) -- only the
+periodic `save_every` checkpoints, if any, capture an interrupted run.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
-function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
+function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
+              save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing)
+    save_every !== nothing && save_path === nothing &&
+        throw(ArgumentError("run!: save_every requires save_path"))
+    save_every !== nothing && save_every < 1 &&
+        throw(ArgumentError("run!: save_every must be >= 1, got $save_every"))
+    save_path !== nothing && ho.objective === nothing &&
+        throw(ArgumentError("run!: save_path requires a real ho.objective -- checkpointing substitutes `nothing` for it in the saved file (to be replaced with a fresh objective via load_hyperoptimizer), which would be ambiguous if it was already `nothing`"))
     ho.status == Interrupted &&
         throw(ArgumentError("run!: this Hyperoptimizer was interrupted and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     if reached_target(ho)
@@ -157,6 +185,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     end
     ho.status = Running
     start!(executor, ho)
+    last_saved = n_told(ho)
     try
         while true
             while !_should_stop_asking(ho) && capacity(executor) > 0
@@ -166,9 +195,14 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
             for (entry, outcome) in poll(executor)
                 tell!(ho, entry, outcome)
             end
+            if save_every !== nothing && n_told(ho) - last_saved >= save_every
+                _save_checkpoint(ho, save_path)
+                last_saved = n_told(ho)
+            end
             _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
         ho.status = Finished
+        save_path !== nothing && _save_checkpoint(ho, save_path)
     catch e
         _handle_run_error(e, ho)
     finally

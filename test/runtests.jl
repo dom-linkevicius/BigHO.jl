@@ -9,7 +9,7 @@ using BigHO
 # CI, which doesn't need to re-verify non-threading concerns under multiple
 # Julia threads -- can still narrow it down explicitly via test_args.
 const CONCERNS = Dict(
-    "basic" => ["basic/domains.jl", "basic/artefacts.jl", "basic/failures.jl", "basic/manual.jl"],
+    "basic" => ["basic/domains.jl", "basic/artefacts.jl", "basic/failures.jl", "basic/manual.jl", "basic/persistence.jl"],
     "samplers" => ["samplers/random.jl"],
     "serial" => ["executors/serial.jl"],
     "threaded" => ["executors/threaded.jl"],
