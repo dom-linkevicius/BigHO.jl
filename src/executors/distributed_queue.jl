@@ -1,5 +1,5 @@
 """
-    DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker=() -> first(Distributed.addprocs(1)))
+    DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker)
 
 Runs each trial on its own freshly spawned worker process (via
 `spawn_worker()`, which must return the new worker's pid), torn down again
@@ -10,11 +10,28 @@ overhead is negligible, so the stronger isolation of a fresh process per
 trial (no risk of one trial's state leaking into another's) is worth more
 than the small amortized cost reuse would save.
 
+`spawn_worker` is required, with no default -- there's no generic
+implementation that could work for an arbitrary objective. At minimum it
+must load this package onto the new worker (a bare `Distributed.addprocs(1)`
+leaves a worker with nothing loaded, so even this package's own internals
+would fail to resolve there), and in practice it usually also needs to load
+whatever packages or helper functions the objective itself depends on --
+e.g.:
+
+```julia
+spawn_worker = () -> begin
+    pid = first(Distributed.addprocs(1))
+    Distributed.remotecall_eval(Main, [pid], :(using BigHO; using MyObjectiveDeps))
+    return pid
+end
+```
+
 Tolerating worker death is still the point: if a worker dies mid-trial, that
 trial is reported as failing (a `ProcessExitedException` is just another
 non-Real outcome to `finalize_entry`, same as any other exception) rather
-than the run aborting. `entry.params`/`entry.pre_artefact` must be
-serializable, since they cross process boundaries.
+than the run aborting. `entry.params`/`entry.pre_artefact`/the objective
+function itself must all be serializable, since they cross process
+boundaries.
 """
 mutable struct DistributedQueue <: AbstractExecutor
     max_concurrency::Int
@@ -32,7 +49,7 @@ mutable struct DistributedQueue <: AbstractExecutor
         return new(max_concurrency, spawn_worker, results, in_flight, pending_exception, tasks)
     end
 end
-function DistributedQueue(max_concurrency::Int=Sys.CPU_THREADS; spawn_worker=() -> first(Distributed.addprocs(1)))
+function DistributedQueue(max_concurrency::Int=Sys.CPU_THREADS; spawn_worker)
     return DistributedQueue(max_concurrency, spawn_worker, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Task[])
 end
 
@@ -50,13 +67,18 @@ end
 Waits for every trial this executor ever dispatched to actually resolve --
 see [`shutdown!(::Threaded)`](@ref) for why this is necessary at all. There's
 no worker pool to tear down here: each trial's own worker is already torn
-down by `submit!` as soon as that trial resolves.
+down by `submit!` as soon as that trial resolves. A genuine InterruptException
+(e.g. a second Ctrl+C while already waiting out a hung worker) propagates
+rather than being swallowed -- everything else (a task failing for some other
+reason) is not this function's concern to report, since any reportable
+outcome already went through the results channel.
 """
 function shutdown!(executor::DistributedQueue)
     for t in executor.tasks
         try
             wait(t)
-        catch
+        catch e
+            e isa InterruptException && rethrow()
         end
     end
     return nothing

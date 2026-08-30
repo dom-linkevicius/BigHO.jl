@@ -11,10 +11,13 @@ jobs:
         concern: [basic, samplers, serial, threaded, distributed]
     # GitHub-hosted runners have multiple CPUs -- JULIA_NUM_THREADS=auto lets
     # Julia use them so the threaded concern actually exercises real
-    # multithreading. Every other concern is pinned to 1 thread explicitly,
+    # multithreading. distributed also needs it: executors/equivalence.jl
+    # (the Serial/Threaded/DistributedQueue equivalence check) lives in that
+    # concern and includes a Threaded(8) leg, which otherwise never gets more
+    # than 1 thread. Every other concern is pinned to 1 thread explicitly,
     # since re-verifying them under multiple threads is pointless.
     env:
-      JULIA_NUM_THREADS: ${{ matrix.concern == 'threaded' && 'auto' || '1' }}
+      JULIA_NUM_THREADS: ${{ (matrix.concern == 'threaded' || matrix.concern == 'distributed') && 'auto' || '1' }}
     steps:
       - uses: actions/checkout@v4
       - uses: julia-actions/setup-julia@v2

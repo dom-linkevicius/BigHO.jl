@@ -62,6 +62,27 @@
     BigHO.shutdown!(ex_shutdown)
     @test finished[]
 
+    # Regression: shutdown! must let a genuine InterruptException propagate
+    # (e.g. a second Ctrl+C while already waiting out a task that's still
+    # running) rather than silently swallowing it -- only non-interrupt
+    # exceptions are this function's business to absorb. wait() on a failed
+    # task wraps the real exception in a TaskFailedException, so check
+    # .task.result for the actual InterruptException underneath.
+    ex_shutdown_interrupt = Threaded(1)
+    BigHO.start!(ex_shutdown_interrupt, nothing)
+    BigHO.submit!(ex_shutdown_interrupt, BigHO.RunEntry(1, (a=1,)), _ -> (sleep(2.0); 1))
+    shutdown_task = @async BigHO.shutdown!(ex_shutdown_interrupt)
+    sleep(0.2)
+    schedule(shutdown_task, InterruptException(); error=true)
+    caught = nothing
+    try
+        wait(shutdown_task)
+    catch e
+        caught = e
+    end
+    @test caught isa TaskFailedException
+    @test caught.task.result isa InterruptException
+
     # Every trial gets told exactly once, with the outcome correctly
     # attributed to its own entry, regardless of completion order under real
     # concurrency -- the thing that's actually at risk in a threaded executor

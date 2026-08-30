@@ -1,8 +1,15 @@
 @testset "DistributedQueue executor" begin
     @info "Testing DistributedQueue executor"
 
-    @test_throws ArgumentError DistributedQueue(0)
-    @test_throws ArgumentError DistributedQueue(-1)
+    @test_throws ArgumentError DistributedQueue(0; spawn_worker=() -> error("should not be called"))
+    @test_throws ArgumentError DistributedQueue(-1; spawn_worker=() -> error("should not be called"))
+
+    # spawn_worker has no default -- there's no generic implementation that
+    # could work for an arbitrary objective (see the docstring) -- so it's a
+    # required keyword argument, and omitting it fails loudly and immediately
+    # rather than silently marking every trial Failed later.
+    @test_throws UndefKeywordError DistributedQueue()
+    @test_throws UndefKeywordError DistributedQueue(4)
 
     # A real usage of spawn_worker must set up whatever the new worker needs
     # to run trials -- here, BigHO itself plus this file's test functions --
@@ -22,6 +29,7 @@
     @everywhere using BigHO
     @everywhere dq_square(a) = a^2
     @everywhere dq_slow(a) = (sleep(0.5); a^2)
+    @everywhere dq_death_slow(a) = (sleep(8.0); a^2)
 
     max_concurrency = 3
     try
@@ -76,6 +84,30 @@
         elapsed = @elapsed BigHO.shutdown!(ex_shutdown)
         @test elapsed > 0.25 # shutdown! actually waited, rather than returning immediately
 
+        # Regression: shutdown! must let a genuine InterruptException
+        # propagate (e.g. a second Ctrl+C while already waiting out a
+        # stuck/slow worker) rather than silently swallowing it. wait() on a
+        # failed task wraps the real exception in a TaskFailedException, so
+        # check .task.result for the actual InterruptException underneath.
+        # A few seconds' delay before interrupting -- not exact timing like
+        # the fetch()-vs-spawn() distinction elsewhere -- just needs
+        # shutdown!'s wait(t) to still be genuinely blocked when it fires,
+        # which holds throughout spawning AND the 5s simulated trial below.
+        ex_shutdown_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker)
+        BigHO.start!(ex_shutdown_interrupt, nothing)
+        BigHO.submit!(ex_shutdown_interrupt, BigHO.RunEntry(1, (a=1,)), a -> (sleep(5.0); a))
+        shutdown_task = @async BigHO.shutdown!(ex_shutdown_interrupt)
+        sleep(3.0)
+        schedule(shutdown_task, InterruptException(); error=true)
+        caught = nothing
+        try
+            wait(shutdown_task)
+        catch e
+            caught = e
+        end
+        @test caught isa TaskFailedException
+        @test caught.task.result isa InterruptException
+
         # Regression: a genuine interrupt landing inside the LOCAL supervisory
         # task (blocked in fetch(), not the remote objective throwing -- that
         # would come back wrapped in a RemoteException instead, since it
@@ -85,10 +117,31 @@
         # primitive Julia's own runtime uses to deliver a real Ctrl+C, since
         # there's no reliable way to force a real interrupt at a precise
         # moment in a test.
-        ex_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker)
+        #
+        # A fixed short sleep can't reliably land the interrupt inside
+        # fetch(): spawn_worker() (addprocs + remotecall_eval) alone takes
+        # multi-second real time, so a naive sleep(0.2) here would actually
+        # catch the task mid-spawn, before remotecall/fetch are ever reached
+        # -- spawn_worker itself flags when it has returned, and only once
+        # that's confirmed (polled with a timeout, not guessed) do we know
+        # dispatch has happened and the task is now blocked in fetch().
+        spawned = Ref(false)
+        function interrupt_spawn_worker()
+            pid = test_spawn_worker()
+            spawned[] = true
+            return pid
+        end
+        ex_interrupt = DistributedQueue(1; spawn_worker=interrupt_spawn_worker)
         BigHO.start!(ex_interrupt, nothing)
         BigHO.submit!(ex_interrupt, BigHO.RunEntry(1, (a=1,)), dq_slow)
-        sleep(0.2)
+        let waited = 0.0
+            while !spawned[] && waited < 60.0
+                sleep(0.1)
+                waited += 0.1
+            end
+        end
+        @test spawned[] # sanity: actually reached fetch(), not still spawning
+        sleep(0.1) # remotecall itself is near-instant once spawn_worker() returns
         schedule(ex_interrupt.tasks[1], InterruptException(); error=true)
         @test isempty(BigHO.poll(ex_interrupt)) # nothing lost, just nothing to report yet
         @test_throws InterruptException BigHO.poll(ex_interrupt) # deferred throw on the next call
@@ -123,7 +176,6 @@
             Distributed.remotecall_eval(Main, [pid], :(using BigHO; dq_death_slow(a) = (sleep(8.0); a^2)))
             return pid
         end
-        @everywhere dq_death_slow(a) = (sleep(8.0); a^2) # so the driver can reference it as `f` too
         ex_death = DistributedQueue(n_death_trials; spawn_worker=death_spawn_worker)
         BigHO.start!(ex_death, nothing)
         for i in 1:n_death_trials
@@ -144,10 +196,26 @@
         end
         @test !isempty(death_spawned)
         rmprocs(death_spawned[1])
+        # Collected via its own task and watched with a timeout, rather than
+        # a bare while-loop, so a future regression that turns "worker dies
+        # -> exception" into "worker dies -> hang" fails this test loudly
+        # instead of hanging the whole suite -- and critically, the
+        # surrounding `finally`'s rmprocs cleanup still runs right after
+        # (killing worker processes doesn't require this task to ever
+        # unblock), so nothing leaks even if it does time out.
         collected = Tuple{BigHO.RunEntry,Any}[]
-        while length(collected) < n_death_trials
-            append!(collected, BigHO.poll(ex_death))
+        collect_task = @async begin
+            while length(collected) < n_death_trials
+                append!(collected, BigHO.poll(ex_death))
+            end
         end
+        let waited = 0.0
+            while !istaskdone(collect_task) && waited < 60.0
+                sleep(0.5)
+                waited += 0.5
+            end
+        end
+        @test istaskdone(collect_task)
         @test length(collected) == n_death_trials
         @test length(death_spawned) == n_death_trials
         @test length(unique(death_spawned)) == n_death_trials # no reuse: one distinct worker per trial
