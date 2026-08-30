@@ -40,6 +40,11 @@
         eq_domains = (a=Ordinal(0:10), b=Ordinal(0:10))
         eq_n = 20
 
+        # Threaded(8) below only proves cross-executor equivalence under real
+        # concurrency if it actually has more than one thread to run on -- see
+        # the identical guard in test/executors/threaded.jl.
+        @test Threads.nthreads() > 1
+
         ho_s = Hyperoptimizer(dq_eq, eq_domains; n=eq_n)
         run!(ho_s; executor=Serial())
         ho_t = Hyperoptimizer(dq_eq, eq_domains; n=eq_n)
