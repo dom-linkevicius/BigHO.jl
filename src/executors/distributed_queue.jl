@@ -84,23 +84,44 @@ function shutdown!(executor::DistributedQueue)
     return nothing
 end
 
+# Tears down a trial's worker. A non-interrupt failure here (e.g. the worker
+# already being unreachable) is logged rather than propagated, so it can't be
+# mistaken for -- or silently overwrite -- that trial's own outcome in
+# submit! below. A genuine InterruptException still propagates, matching
+# every other blocking call in this file (fetch, shutdown!'s wait).
+function _teardown_worker(worker)
+    try
+        Distributed.rmprocs(worker)
+    catch e
+        e isa InterruptException && rethrow()
+        @warn "Failed to tear down worker after trial" exception = e
+    end
+    return nothing
+end
+
 function submit!(executor::DistributedQueue, entry::RunEntry, f)
     executor.in_flight += 1
     t = @async begin
-        try
+        # outcome is resolved to exactly one value -- the fetched result or
+        # the caught exception -- before the single put! below, so a
+        # teardown failure in _teardown_worker's finally can never produce a
+        # second, phantom result for the same entry (its own non-interrupt
+        # failures are absorbed there precisely to prevent that).
+        outcome = try
             worker = executor.spawn_worker()
             try
                 future = Distributed.remotecall(safe_call, worker, f, entry.params, entry.pre_artefact)
-                put!(executor.results, (entry, fetch(future)))
+                fetch(future)
             finally
                 # Always torn down -- whether this trial succeeded, failed,
                 # or the worker itself died underneath it (in which case this
                 # is a harmless no-op on an already-gone pid).
-                Distributed.rmprocs(worker)
+                _teardown_worker(worker)
             end
         catch e
-            put!(executor.results, (entry, e))
+            e
         end
+        put!(executor.results, (entry, outcome))
     end
     push!(executor.tasks, t)
     return nothing
