@@ -134,7 +134,7 @@ function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
 end
 
 """
-    run!(ho; executor=Serial(), save_every=nothing, save_path=nothing)
+    run!(ho; executor=Serial(), save_every=nothing, save_path=nothing, show_progress=true)
 
 Drive `ho` to completion (until `ho.n` trials have completed, the sampler is
 exhausted, or the run is interrupted), dispatching evaluations through
@@ -161,17 +161,27 @@ Each write is atomic (a temp file renamed over `save_path`), so a crash
 mid-write can't corrupt the last good checkpoint. Note this final save does
 not happen on interrupt (see [`OptimizerStatus`](@ref)) -- only the
 periodic `save_every` checkpoints, if any, capture an interrupted run.
+
+`show_progress` (on by default) displays a `ProgressMeter` bar tracking
+trials told (any outcome) against `ho.n`, which must therefore be set --
+there's currently no sampler that determines its own total independently
+of `ho.n`; pass `show_progress=false` to run without a target instead. The
+bar always finishes (even on interrupt or error) so a partially-drawn one
+is never left behind in the terminal.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
-              save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing)
+              save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing,
+              show_progress::Bool=true)
     save_every !== nothing && save_path === nothing &&
         throw(ArgumentError("run!: save_every requires save_path"))
     save_every !== nothing && save_every < 1 &&
         throw(ArgumentError("run!: save_every must be >= 1, got $save_every"))
     save_path !== nothing && ho.objective === nothing &&
         throw(ArgumentError("run!: save_path requires a real ho.objective -- checkpointing substitutes `nothing` for it in the saved file (to be replaced with a fresh objective via load_hyperoptimizer), which would be ambiguous if it was already `nothing`"))
+    show_progress && ho.n === nothing &&
+        throw(ArgumentError("run!: show_progress requires ho.n to be set"))
     ho.status == Interrupted &&
         throw(ArgumentError("run!: this Hyperoptimizer was interrupted and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     if reached_target(ho)
@@ -186,6 +196,24 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
     ho.status = Running
     start!(executor, ho)
     last_saved = n_told(ho)
+    progress = nothing
+    if show_progress
+        progress = ProgressMeter.Progress(ho.n)
+        # Progress's own `start` kwarg doesn't actually seed its internal
+        # counter (confirmed empirically: it stays 0 regardless), so a
+        # resumed run whose first update! jumps straight from 0 to a large
+        # n_told(ho) would otherwise show a wrong/stale position until the
+        # next natural redraw. force=true here -- only for this one initial
+        # sync, not the in-loop updates below -- makes the correct starting
+        # position visible immediately instead of waiting on dt throttling.
+        # It also has a second, necessary effect: ProgressMeter's own
+        # completion message (from finish! below) only ever prints if some
+        # earlier update actually printed (checked directly in its source --
+        # not itself controllable via force), so without this, a run whose
+        # every trial resolves faster than dt apart would finish having
+        # displayed nothing at all, start to end.
+        ProgressMeter.update!(progress, n_told(ho); force=true)
+    end
     try
         while true
             while !_should_stop_asking(ho) && capacity(executor) > 0
@@ -199,6 +227,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
                 _save_checkpoint(ho, save_path)
                 last_saved = n_told(ho)
             end
+            progress !== nothing && ProgressMeter.update!(progress, n_told(ho))
             _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
         ho.status = Finished
@@ -207,6 +236,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
         _handle_run_error(e, ho)
     finally
         shutdown!(executor)
+        progress !== nothing && ProgressMeter.finish!(progress)
     end
     return ho
 end

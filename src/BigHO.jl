@@ -14,6 +14,7 @@ using Distributed
 using StableRNGs: StableRNG
 using StatsBase: Weights, sample
 import JLD2
+import ProgressMeter
 
 include("domains.jl")
 include("samplers/sampler.jl")
