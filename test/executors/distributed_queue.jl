@@ -160,45 +160,30 @@
         # aborting. Also confirms the "no reuse" guarantee directly: exactly
         # one freshly spawned, never-repeated worker per trial.
         #
-        # Timing here has to respect addprocs' real cost (empirically ~2-6s
-        # each on this machine, not milliseconds). Which worker to kill is
-        # decided via a RemoteChannel that each trial reports into right
-        # before it sleeps, rather than by polling for the first pid to
-        # appear in death_spawned: "the OS process exists" and "this
-        # worker's trial has actually started running" are different
-        # moments, with an unbounded gap between them under scheduler
-        # contention (this is what previously flaked on CI -- a busy
-        # runner let that gap stretch past the simulated trial's own
-        # duration, so the "first" worker had already finished and
-        # returned normally by the time it was killed). Blocking on
-        # take!(started) instead of polling means the target is
-        # confirmed still mid-sleep, with the full simulated duration left
-        # as margin, regardless of how long that confirmation itself took
-        # to arrive.
+        # The dying trial is chosen by VALUE, not by timing: since each
+        # trial gets its own dedicated worker (never shared), rigging one
+        # specific parameter value to call exit() is deterministic --
+        # there's no race to decide which worker to kill or when, unlike
+        # guessing from wall-clock timing (which flaked on a loaded CI
+        # runner -- see git history). fetch() on that one trial's Future
+        # throws ProcessExitedException exactly as it would for a real
+        # crash, without disturbing its siblings, each computing on their
+        # own separate, unaffected process.
         n_death_trials = 4
+        dying_id = 2
         death_spawned = Int[]
-        started = Distributed.RemoteChannel(() -> Channel{Int}(n_death_trials))
         function death_spawn_worker()
             pid = first(addprocs(1))
             push!(death_spawned, pid)
             Distributed.remotecall_eval(Main, [pid], :(using BigHO))
             return pid
         end
-        dq_death_slow_reporting = a -> begin
-            put!(started, myid())
-            sleep(8.0)
-            return a^2
-        end
+        dq_death_or_square = a -> a == dying_id ? exit() : a^2
         ex_death = DistributedQueue(n_death_trials; spawn_worker=death_spawn_worker)
         BigHO.start!(ex_death, nothing)
         for i in 1:n_death_trials
-            BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,)), dq_death_slow_reporting)
+            BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,)), dq_death_or_square)
         end
-        # Kill whichever worker's trial reports in first -- guaranteed to
-        # still be mid-sleep at that instant, unlike guessing from
-        # death_spawned's spawn order.
-        first_started = take!(started)
-        rmprocs(first_started)
         # Collected via its own task and watched with a timeout, rather than
         # a bare while-loop, so a future regression that turns "worker dies
         # -> exception" into "worker dies -> hang" fails this test loudly
@@ -222,11 +207,12 @@
         @test length(collected) == n_death_trials
         @test length(death_spawned) == n_death_trials
         @test length(unique(death_spawned)) == n_death_trials # no reuse: one distinct worker per trial
-        n_ok = count(pair -> !(pair[2] isa Exception), collected)
-        n_failed = count(pair -> pair[2] isa Exception, collected)
-        @test n_ok >= 1     # trials on their own healthy workers completed normally
-        @test n_failed >= 1 # the trial whose worker died is reported failed, not lost
-        @test n_ok + n_failed == n_death_trials
+        outcome_by_id = Dict(e.id => outcome for (e, outcome) in collected)
+        @test outcome_by_id[dying_id] isa Exception # the trial whose worker died is reported failed, not lost
+        for i in 1:n_death_trials
+            i == dying_id && continue
+            @test outcome_by_id[i].value == i^2 # siblings unaffected, each with its own correct result
+        end
         BigHO.shutdown!(ex_death)
     finally
         rmprocs(filter(!=(1), workers()))
