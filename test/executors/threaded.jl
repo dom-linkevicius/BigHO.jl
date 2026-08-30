@@ -111,16 +111,21 @@
     # Graceful interrupt under real concurrency: an InterruptException thrown
     # inside a spawned task must not deadlock poll() waiting forever for a
     # result that task can now never produce -- run! stops gracefully
-    # (ho.done = true) with valid partial results, same contract as Serial.
-    # max_concurrency=1 keeps this deterministic (one trial in flight at a
-    # time, so the second call is unambiguously the one that interrupts).
+    # (ho.status = Interrupted) with valid partial results, same contract as
+    # Serial, and the interrupted trial itself is abandoned rather than left
+    # permanently Pending. max_concurrency=1 keeps this deterministic (one
+    # trial in flight at a time, so the second call is unambiguously the one
+    # that interrupts).
     let n_calls = Ref(0)
         global interrupt_after_first_threaded(a) = (n_calls[] += 1; n_calls[] == 1 ? a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first_threaded, (a=Nominal([1, 2, 3]),); n=3)
     @test_logs (:info, r"Aborting") run!(ho_interrupt; executor=Threaded(1))
-    @test ho_interrupt.done
+    @test ho_interrupt.status == BigHO.Interrupted
     @test length(results(ho_interrupt)) == 1  # the trial before the interrupt completed normally
+    @test ho_interrupt.n_pending == 0
+    @test ho_interrupt.runs[2].status == BigHO.Abandoned # the interrupted trial itself
+    @test_throws ArgumentError run!(ho_interrupt) # an Interrupted optimizer can never be resumed
 
     # Correctness: enough trials relative to the grid size (~500x oversampling
     # per candidate) to find the true optimum with overwhelming probability
