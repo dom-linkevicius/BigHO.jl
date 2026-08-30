@@ -29,7 +29,6 @@
     @everywhere using BigHO
     @everywhere dq_square(a) = a^2
     @everywhere dq_slow(a) = (sleep(0.5); a^2)
-    @everywhere dq_death_slow(a) = (sleep(8.0); a^2)
 
     max_concurrency = 3
     try
@@ -162,40 +161,44 @@
         # one freshly spawned, never-repeated worker per trial.
         #
         # Timing here has to respect addprocs' real cost (empirically ~2-6s
-        # each on this machine, not milliseconds), which is why: (a) waiting
-        # for spawns to register polls with a generous timeout instead of a
-        # short fixed sleep, and (b) the simulated trial itself sleeps far
-        # longer than that worst-case spawn variance, so a worker that
-        # spawned quickly hasn't already finished and torn itself down by
-        # the time a slower sibling is still spawning.
+        # each on this machine, not milliseconds). Which worker to kill is
+        # decided via a RemoteChannel that each trial reports into right
+        # before it sleeps, rather than by polling for the first pid to
+        # appear in death_spawned: "the OS process exists" and "this
+        # worker's trial has actually started running" are different
+        # moments, with an unbounded gap between them under scheduler
+        # contention (this is what previously flaked on CI -- a busy
+        # runner let that gap stretch past the simulated trial's own
+        # duration, so the "first" worker had already finished and
+        # returned normally by the time it was killed). Blocking on
+        # take!(started) instead of polling means the target is
+        # confirmed still mid-sleep, with the full simulated duration left
+        # as margin, regardless of how long that confirmation itself took
+        # to arrive.
         n_death_trials = 4
         death_spawned = Int[]
+        started = Distributed.RemoteChannel(() -> Channel{Int}(n_death_trials))
         function death_spawn_worker()
             pid = first(addprocs(1))
             push!(death_spawned, pid)
-            Distributed.remotecall_eval(Main, [pid], :(using BigHO; dq_death_slow(a) = (sleep(8.0); a^2)))
+            Distributed.remotecall_eval(Main, [pid], :(using BigHO))
             return pid
+        end
+        dq_death_slow_reporting = a -> begin
+            put!(started, myid())
+            sleep(8.0)
+            return a^2
         end
         ex_death = DistributedQueue(n_death_trials; spawn_worker=death_spawn_worker)
         BigHO.start!(ex_death, nothing)
         for i in 1:n_death_trials
-            BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,)), dq_death_slow)
+            BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,)), dq_death_slow_reporting)
         end
-        # Kill the FIRST worker to actually spawn, as soon as possible --
-        # waiting for every worker to spawn before killing one risks the
-        # earliest spawner having already finished its whole
-        # spawn-run-self-teardown cycle by the time the slowest sibling's
-        # addprocs finally resolves, since spawning several workers
-        # concurrently can itself take much longer than any one trial's
-        # simulated 8s if e.g. precompilation contends across them.
-        let waited = 0.0
-            while isempty(death_spawned) && waited < 60.0
-                sleep(0.1)
-                waited += 0.1
-            end
-        end
-        @test !isempty(death_spawned)
-        rmprocs(death_spawned[1])
+        # Kill whichever worker's trial reports in first -- guaranteed to
+        # still be mid-sleep at that instant, unlike guessing from
+        # death_spawned's spawn order.
+        first_started = take!(started)
+        rmprocs(first_started)
         # Collected via its own task and watched with a timeout, rather than
         # a bare while-loop, so a future regression that turns "worker dies
         # -> exception" into "worker dies -> hang" fails this test loudly
