@@ -103,9 +103,9 @@ refuse to touch.
 function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
         _is_terminal(ho) &&
-            error("ask!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot produce new trials -- construct a new Hyperoptimizer to continue")
-        exhausted(ho.sampler, ho) && error("Hyperoptimizer's sampler is exhausted: no more candidates available")
-        reached_target(ho) && error("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more")
+            throw(ArgumentError("ask!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot produce new trials -- construct a new Hyperoptimizer to continue"))
+        exhausted(ho.sampler, ho) && throw(ArgumentError("Hyperoptimizer's sampler is exhausted: no more candidates available"))
+        reached_target(ho) && throw(ArgumentError("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more"))
         ctx = AskContext(ho.candidates, length(ho.runs), ho.n)
         raw = ho.sampler(ctx)
         id = length(ho.runs) + 1
@@ -141,7 +141,7 @@ of those very entries) would silently resurrect it and could double-count
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
         _is_terminal(ho) &&
-            error("tell!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot record new outcomes -- construct a new Hyperoptimizer to continue")
+            throw(ArgumentError("tell!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot record new outcomes -- construct a new Hyperoptimizer to continue"))
         told = finalize_entry(ho.runs[entry.id], outcome)
         ho.runs[told.id] = told
         ho.n_pending -= 1
@@ -181,29 +181,49 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
         return ho
     end
     if exhausted(ho.sampler, ho)
-        ho.sampler isa FixedPlanSampler &&
+        if ho.sampler isa FixedPlanSampler
             @warn "$(typeof(ho.sampler)) has a fixed plan and is already exhausted; run! won't produce any more trials -- change params or use a different sampler"
+        else
+            @warn "run!: $(typeof(ho.sampler)) is exhausted; run! won't produce any more trials"
+        end
         return ho
     end
     ho.status = Running
     start!(executor, ho)
+    # main_exception, if set, is whatever _handle_run_error's non-InterruptException
+    # method rethrew below -- caught here (rather than left to propagate through a
+    # single try/finally) so shutdown! still runs unconditionally, but a SECOND
+    # exception from shutdown! itself (e.g. a genuine interrupt while it waits out a
+    # still-running trial) can never silently replace it -- see shutdown!'s own catch
+    # below for why this matters at all. Stays nothing on a graceful interrupt (that
+    # method doesn't rethrow), matching run!'s existing "return gracefully" contract.
+    main_exception = nothing
     try
-        while true
-            while !_should_stop_asking(ho) && capacity(executor) > 0
-                entry = ask!(ho)
-                submit!(executor, entry, ho.objective)
+        try
+            while true
+                while !_should_stop_asking(ho) && capacity(executor) > 0
+                    entry = ask!(ho)
+                    submit!(executor, entry, ho.objective)
+                end
+                for (entry, outcome) in poll(executor)
+                    tell!(ho, entry, outcome)
+                end
+                _should_stop_asking(ho) && ho.n_pending == 0 && break
             end
-            for (entry, outcome) in poll(executor)
-                tell!(ho, entry, outcome)
-            end
-            _should_stop_asking(ho) && ho.n_pending == 0 && break
+            ho.status = Finished
+        catch e
+            _handle_run_error(e, ho)
         end
-        ho.status = Finished
     catch e
-        _handle_run_error(e, ho)
-    finally
-        shutdown!(executor)
+        main_exception = e
     end
+    try
+        shutdown!(executor)
+    catch shutdown_e
+        main_exception === nothing && rethrow(shutdown_e)
+        @warn "shutdown! raised while already handling an earlier error -- the earlier error is what run! reports" exception = shutdown_e
+    end
+    main_exception === nothing || rethrow(main_exception)
     return ho
 end
 

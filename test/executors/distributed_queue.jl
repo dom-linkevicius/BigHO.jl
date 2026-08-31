@@ -186,7 +186,12 @@ BigHO.on_tell!(::SequentialSampler, entry) = nothing
 
         # Correctness: a full run through Hyperoptimizer/run! actually works
         # and finds a sane answer, not just the low-level interface above.
-        ho = Hyperoptimizer(dq_square, (a=Ordinal(1:20),); n=20)
+        # Domain kept small (not the 500+ oversampling used to stress-test
+        # Serial/Threaded elsewhere) rather than raising n to get the same
+        # margin -- each trial here pays a real process-spawn cost, so
+        # growing n would meaningfully slow this test; n=20 over 5 values is
+        # still a healthy ~4x oversampling instead of a bare 1x.
+        ho = Hyperoptimizer(dq_square, (a=Ordinal(1:5),); n=20)
         run!(ho; executor=DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker))
         @test length(results(ho)) == 20
         @test all(e -> e.status == BigHO.Completed, ho.runs)
@@ -287,6 +292,32 @@ BigHO.on_tell!(::SequentialSampler, entry) = nothing
         @test count(e -> e.status == BigHO.Abandoned, ho_dq_interrupt.runs) == 3 # all 3, not just the one that threw
         @test length(interrupt_others_spawned) == 3 # one dedicated worker per trial, as always
         @test isempty(intersect(interrupt_others_spawned, workers())) # every one of them was torn down -- none leaked
+
+        # Regression: spawn_worker() itself throwing a non-interrupt exception
+        # AFTER already provisioning a worker (e.g. addprocs succeeded but a
+        # later setup step like remotecall_eval failed) must not crash or hang
+        # submit!/poll -- it's absorbed as an ordinary Failed trial, same as
+        # any other per-trial failure, since BigHO is never given a pid to
+        # tear down when spawn_worker never returns one (see the module
+        # docstring's note on spawn_worker's own cleanup responsibility in
+        # that case). Tracks the pid it creates, like death_spawn_worker
+        # above, just to confirm a worker really was provisioned before the
+        # induced failure -- this testset's own outer rmprocs cleanup below
+        # reaps it, since BigHO itself has no pid to do so with.
+        spawn_fail_spawned = Int[]
+        function spawn_fail_spawn_worker()
+            pid = first(addprocs(1))
+            push!(spawn_fail_spawned, pid)
+            error("simulated cluster/remotecall_eval setup failure")
+        end
+        ex_spawn_fail = DistributedQueue(1; spawn_worker=spawn_fail_spawn_worker)
+        BigHO.start!(ex_spawn_fail, nothing)
+        BigHO.submit!(ex_spawn_fail, BigHO.RunEntry(1, (a=1,)), dq_square)
+        out_spawn_fail = BigHO.poll(ex_spawn_fail)
+        @test length(out_spawn_fail) == 1
+        @test out_spawn_fail[1][2] isa Exception # an ordinary Failed outcome, not a hang or crash
+        BigHO.shutdown!(ex_spawn_fail)
+        @test length(spawn_fail_spawned) == 1 # confirms this exercised "worker created, then setup failed"
     finally
         rmprocs(filter(!=(1), workers()))
     end

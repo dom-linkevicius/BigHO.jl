@@ -61,7 +61,11 @@
         # happy-path equivalence above never fails a trial, so it can't catch
         # a future race that misattributes a Failed outcome to the wrong
         # entry, or vice versa, under concurrent completion timing.
-        h_domain = (a=Ordinal(1:10),)
+        # Domain kept small rather than raising h_n, for the same reason
+        # eq_n above is: DistributedQueue pays a real process-spawn cost per
+        # trial. a==5 (the hardcoded failure value below) stays the domain's
+        # max, giving h_n=20 a healthy ~4x oversampling instead of a bare 2x.
+        h_domain = (a=Ordinal(1:5),)
         h_n = 20
 
         ho_s_mixed = Hyperoptimizer(dq_eq_h, h_domain; n=h_n)

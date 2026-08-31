@@ -38,8 +38,8 @@
     # "Interrupted/Errored is permanent" guarantee run!/settarget! enforce,
     # letting new trials get silently asked and told on an optimizer that's
     # supposed to be done.
-    @test_throws ErrorException BigHO.ask!(ho_interrupt)
-    @test_throws ErrorException BigHO.tell!(ho_interrupt, ho_interrupt.runs[2], 42) # even for its own abandoned entry
+    @test_throws ArgumentError BigHO.ask!(ho_interrupt)
+    @test_throws ArgumentError BigHO.tell!(ho_interrupt, ho_interrupt.runs[2], 42) # even for its own abandoned entry
 
     # Correctness: enough trials relative to the grid size (~500x oversampling
     # per candidate) to find the true optimum with overwhelming probability

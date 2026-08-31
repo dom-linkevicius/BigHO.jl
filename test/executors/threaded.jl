@@ -167,8 +167,8 @@ BigHO.on_tell!(::BuggySampler, entry) = nothing
     @test count(e -> e.status == BigHO.Abandoned, ho_errored.runs) == 1 # the still-sleeping sibling
     @test_throws ArgumentError run!(ho_errored) # an Errored optimizer can never be resumed either
     @test_throws ArgumentError settarget!(ho_errored, 10)
-    @test_throws ErrorException BigHO.ask!(ho_errored) # nor can the manual ask!/tell! API sneak past this
-    @test_throws ErrorException BigHO.tell!(ho_errored, ho_errored.runs[2], 42) # even for its own abandoned entry
+    @test_throws ArgumentError BigHO.ask!(ho_errored) # nor can the manual ask!/tell! API sneak past this
+    @test_throws ArgumentError BigHO.tell!(ho_errored, ho_errored.runs[2], 42) # even for its own abandoned entry
 
     # Correctness: enough trials relative to the grid size (~500x oversampling
     # per candidate) to find the true optimum with overwhelming probability
