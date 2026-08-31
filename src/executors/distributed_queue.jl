@@ -60,6 +60,8 @@ mutable struct DistributedQueue <: AbstractExecutor
     # convenience constructor's validation below entirely.
     function DistributedQueue(max_concurrency::Int, spawn_worker, teardown_timeout::Real, results::Channel{Tuple{RunEntry,Any}}, in_flight::Int, pending_exception::Union{Exception,Nothing}, tasks::Vector{Task})
         max_concurrency >= 1 || throw(ArgumentError("max_concurrency must be >= 1, got $max_concurrency"))
+        teardown_timeout > 0 ||
+            throw(ArgumentError("teardown_timeout must be a positive number of seconds (got $teardown_timeout) -- 0 disables Distributed.rmprocs's blocking wait entirely, silently reinstating an unbounded worker_lock hold"))
         return new(max_concurrency, spawn_worker, teardown_timeout, results, in_flight, pending_exception, tasks)
     end
 end
@@ -70,7 +72,14 @@ end
 wait for its worker to actually terminate -- see `_teardown_worker` for why
 this matters. The default roughly matches `LocalManager`'s own kill()
 escalation window; a custom `ClusterManager` whose job cancellation takes
-longer should raise it.
+longer should raise it. Must be a positive, non-NaN number: `0` is rejected
+rather than accepted as "don't wait" -- to `Distributed.rmprocs`, `waitfor=0`
+isn't a very short timeout, it's a *different* code path (an unawaited,
+fire-and-forget background removal with no bound at all), which would
+silently reinstate the exact unbounded hang this field exists to prevent.
+`Inf` is allowed as a deliberate, informed way to opt back into an unbounded
+wait, since it takes the normal bounded-wait code path with an effectively
+infinite bound, not the `waitfor==0` special case.
 """
 function DistributedQueue(max_concurrency::Int=Sys.CPU_THREADS; spawn_worker, teardown_timeout::Real=30)
     return DistributedQueue(max_concurrency, spawn_worker, teardown_timeout, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Task[])

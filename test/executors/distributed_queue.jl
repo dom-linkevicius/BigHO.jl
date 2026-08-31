@@ -25,6 +25,15 @@ BigHO.on_tell!(::SequentialSampler, entry) = nothing
     @test_throws ArgumentError DistributedQueue(0; spawn_worker=() -> error("should not be called"))
     @test_throws ArgumentError DistributedQueue(-1; spawn_worker=() -> error("should not be called"))
 
+    # teardown_timeout=0 isn't "don't wait" to Distributed.rmprocs -- it's a
+    # different, fire-and-forget code path with no bound at all, silently
+    # reinstating the exact unbounded worker_lock hold teardown_timeout
+    # exists to prevent. Negative/NaN are equally nonsensical. All three must
+    # be rejected up front rather than accepted and misbehave later.
+    @test_throws ArgumentError DistributedQueue(1; spawn_worker=() -> error("should not be called"), teardown_timeout=0)
+    @test_throws ArgumentError DistributedQueue(1; spawn_worker=() -> error("should not be called"), teardown_timeout=-1)
+    @test_throws ArgumentError DistributedQueue(1; spawn_worker=() -> error("should not be called"), teardown_timeout=NaN)
+
     # spawn_worker has no default -- there's no generic implementation that
     # could work for an arbitrary objective (see the docstring) -- so it's a
     # required keyword argument, and omitting it fails loudly and immediately
@@ -127,6 +136,28 @@ BigHO.on_tell!(::SequentialSampler, entry) = nothing
         end
         @test caught isa TaskFailedException
         @test caught.task.result isa InterruptException
+
+        # Regression: shutdown! must also recognize an interrupt that fails a
+        # TRIAL's own task (as opposed to landing directly on shutdown!'s own
+        # wait(t) call above) -- the case added in round 3 for an interrupt
+        # landing inside _teardown_worker, after that trial's outcome has
+        # already been put! and reported. wait() on a task that itself failed
+        # wraps the exception in TaskFailedException too, which is exactly
+        # what this elseif branch exists to unwrap; confirmed (per the round-4
+        # review that flagged this branch as untested) that deleting it still
+        # passes the whole suite, so this pins the behavior directly. Seeded
+        # by hand, like ex_batch above, since real timing can't reliably land
+        # an interrupt inside this exact window.
+        ex_task_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker)
+        BigHO.start!(ex_task_interrupt, nothing)
+        failed_task = @async throw(InterruptException())
+        try
+            wait(failed_task)
+        catch
+        end
+        @test istaskfailed(failed_task)
+        push!(ex_task_interrupt.tasks, failed_task)
+        @test_throws InterruptException BigHO.shutdown!(ex_task_interrupt)
 
         # Regression: a genuine interrupt landing inside the LOCAL supervisory
         # task (blocked in fetch(), not the remote objective throwing -- see

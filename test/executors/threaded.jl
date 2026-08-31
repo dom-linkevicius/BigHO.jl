@@ -159,7 +159,19 @@ BigHO.on_tell!(::BuggySampler, entry) = nothing
     # the exact moment the sampler throws on its 3rd call.
     ho_errored = Hyperoptimizer(a -> a == 1 ? 1.0 : (sleep(2.0); 2.0), (a=Nominal([1, 2, 3]),);
                                  sampler=BuggySampler(), n=3)
-    @test_throws ErrorException run!(ho_errored; executor=Threaded(2))
+    # Checks the actual message, not just the exception TYPE: a prior bug in
+    # run!'s own cleanup (rethrow called outside any active catch block) also
+    # raised an ErrorException here, just the wrong one (Julia's own "rethrow
+    # not allowed outside a catch block"), which a type-only check couldn't
+    # have caught.
+    run_errored_exception = nothing
+    try
+        run!(ho_errored; executor=Threaded(2))
+    catch e
+        run_errored_exception = e
+    end
+    @test run_errored_exception isa ErrorException
+    @test run_errored_exception.msg == "sampler bug"
     @test ho_errored.status == BigHO.Errored
     @test ho_errored.n_pending == 0
     @test length(ho_errored.runs) == 2 # the 3rd draw's entry is never created; ask! throws before that

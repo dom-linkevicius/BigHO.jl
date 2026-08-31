@@ -15,6 +15,15 @@ refuses to run again on either. They're kept as separate statuses rather
 than one, since conflating "the user asked to stop" with "something in the
 optimizer's own code is broken" would make the latter harder to notice and
 debug -- checking `ho.status` after a crash should say which one happened.
+
+`ho.status` describes the trials' own resolution as of the moment `run!`'s
+main loop stopped, not necessarily whether the `run!` *call* itself returned
+without incident: a genuine interrupt or an unrelated error landing strictly
+during `run!`'s own trailing cleanup (after every trial has already resolved,
+so `ho.status` is already `Finished`/`Interrupted`/`Errored`) still propagates
+as an exception from `run!`, without retroactively changing that already-final
+status -- it stays accurate about the trials regardless of what happens during
+cleanup afterward.
 """
 @enum OptimizerStatus Initialized Running Interrupted Errored Finished
 
@@ -169,7 +178,10 @@ construct a new `Hyperoptimizer` instead. Warns and returns without doing
 anything if `ho` already has nothing to do: its target already reached
 (call `settarget!` first), or its sampler exhausted (with a fixed plan, no
 further call could ever produce more trials for it; see
-[`FixedPlanSampler`](@ref)).
+[`FixedPlanSampler`](@ref)). Note that a call can still raise even after every
+trial has already resolved and `ho.status` is already terminal, if cleanup
+itself (tearing down an executor's workers) is interrupted or fails -- see
+[`OptimizerStatus`](@ref).
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
@@ -223,7 +235,13 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
         main_exception === nothing && rethrow(shutdown_e)
         @warn "shutdown! raised while already handling an earlier error -- the earlier error is what run! reports" exception = shutdown_e
     end
-    main_exception === nothing || rethrow(main_exception)
+    # throw, not rethrow -- by this point both enclosing catch blocks have
+    # already returned, so we're outside the dynamic extent rethrow requires;
+    # main_exception is just a captured value, and throw raises it directly
+    # (type and message intact; only the backtrace now starts here instead of
+    # at the original error site, which is a fair trade against rethrow
+    # raising Julia's own "not allowed outside a catch block" error instead).
+    main_exception === nothing || throw(main_exception)
     return ho
 end
 
@@ -254,12 +272,20 @@ end
 # exception itself still propagates, since swallowing a genuine bug would
 # make it far harder to notice or debug.
 function _handle_run_error(e, ho::Hyperoptimizer)
-    _abandon_pending!(ho)
+    # Status set BEFORE _abandon_pending! runs, not after: _abandon_pending!
+    # itself blocks (lock(ho.lock)) and so can in principle be interrupted --
+    # if it were, a status write placed after it would never be reached,
+    # leaving ho.status stuck at the non-terminal Running forever. A plain
+    # field assignment can't itself throw, so capturing it first is safe
+    # regardless of what happens next -- same "capture the inert value before
+    # anything that can still block or throw" principle submit! already
+    # applies to a trial's own outcome.
     ho.status = Errored
+    _abandon_pending!(ho)
     rethrow(e)
 end
 function _handle_run_error(::InterruptException, ho::Hyperoptimizer)
-    _abandon_pending!(ho)
     ho.status = Interrupted
+    _abandon_pending!(ho)
     @info "Aborting hyperoptimization, returning partial results"
 end
