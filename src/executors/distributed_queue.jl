@@ -32,6 +32,11 @@ non-Real outcome to `finalize_entry`, same as any other exception) rather
 than the run aborting. `entry.params`/`entry.pre_artefact`/the objective
 function itself must all be serializable, since they cross process
 boundaries.
+
+A genuine `InterruptException` thrown by the objective itself is still
+recognized as one and stops the run gracefully, the same as it would under
+`Serial`/`Threaded` -- even though it actually crosses back from the worker
+wrapped in a `RemoteException`.
 """
 mutable struct DistributedQueue <: AbstractExecutor
     max_concurrency::Int
@@ -99,6 +104,19 @@ function _teardown_worker(worker)
     return nothing
 end
 
+# A genuine InterruptException thrown by the objective itself runs on a
+# remote worker, so it crosses back to the driver through fetch() wrapped in
+# a RemoteException, not as the raw InterruptException poll()/_take_one!
+# check for (confirmed empirically: fetch() on a future whose remote task
+# threw InterruptException raises RemoteException(pid, CapturedException(
+# InterruptException(), ...)), not InterruptException itself). Unwrapped
+# right where it's caught so everything downstream only ever has to
+# recognize one shape of "this was really an interrupt" -- any other
+# RemoteException (an unrelated remote error, e.g. a deserialization
+# failure) is left untouched and still reported as an ordinary failed
+# outcome, exactly as before.
+_unwrap_remote_interrupt(e) = e isa RemoteException && e.captured.ex isa InterruptException ? e.captured.ex : e
+
 function submit!(executor::DistributedQueue, entry::RunEntry, f)
     executor.in_flight += 1
     t = @async begin
@@ -119,7 +137,7 @@ function submit!(executor::DistributedQueue, entry::RunEntry, f)
                 _teardown_worker(worker)
             end
         catch e
-            e
+            _unwrap_remote_interrupt(e)
         end
         put!(executor.results, (entry, outcome))
     end

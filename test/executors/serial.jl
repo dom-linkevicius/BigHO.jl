@@ -33,6 +33,14 @@
     @test_throws ArgumentError run!(ho_interrupt) # an Interrupted optimizer can never be resumed
     @test_throws ArgumentError settarget!(ho_interrupt, 10) # nor can its target be raised to feign otherwise
 
+    # Regression: ask!/tell! (the manual API) must refuse a terminal
+    # Hyperoptimizer too -- otherwise they're a backdoor around the
+    # "Interrupted/Errored is permanent" guarantee run!/settarget! enforce,
+    # letting new trials get silently asked and told on an optimizer that's
+    # supposed to be done.
+    @test_throws ErrorException BigHO.ask!(ho_interrupt)
+    @test_throws ErrorException BigHO.tell!(ho_interrupt, ho_interrupt.runs[2], 42) # even for its own abandoned entry
+
     # Correctness: enough trials relative to the grid size (~500x oversampling
     # per candidate) to find the true optimum with overwhelming probability
     # regardless of RNG state, without depending on exact draw-position luck.

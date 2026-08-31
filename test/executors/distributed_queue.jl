@@ -1,3 +1,24 @@
+# A minimal custom Sampler producing candidates 1, 2, 3, ... in that exact
+# order every time, regardless of concurrency downstream -- ask! itself is
+# always called sequentially from run!'s own driving loop (protected by
+# ho.lock), even though what happens to each drawn value afterward (on the
+# executor side) can run concurrently. Lets one specific trial be rigged to
+# behave differently by VALUE rather than by luck of a random draw or by
+# timing -- the same principle death_spawn_worker below already relies on
+# via directly-constructed RunEntry ids, just usable here at the ask!/run!
+# level instead of the low-level submit! API.
+mutable struct SequentialSampler <: BigHO.Sampler
+    n_calls::Int
+end
+SequentialSampler() = SequentialSampler(0)
+function (s::SequentialSampler)(ctx)
+    s.n_calls += 1
+    return [s.n_calls]
+end
+BigHO.init!(::SequentialSampler, ctx) = nothing
+BigHO.exhausted(::SequentialSampler, ho) = false
+BigHO.on_tell!(::SequentialSampler, entry) = nothing
+
 @testset "DistributedQueue executor" begin
     @info "Testing DistributedQueue executor"
 
@@ -108,11 +129,11 @@
         @test caught.task.result isa InterruptException
 
         # Regression: a genuine interrupt landing inside the LOCAL supervisory
-        # task (blocked in fetch(), not the remote objective throwing -- that
-        # would come back wrapped in a RemoteException instead, since it
-        # happens on the worker) must not deadlock or get lost -- forwarded
-        # through the channel and deferred to the next poll() call, exactly
-        # like Threaded. Injected via schedule(...; error=true), the same
+        # task (blocked in fetch(), not the remote objective throwing -- see
+        # the dedicated test for that below, since it's a genuinely different
+        # code path) must not deadlock or get lost -- forwarded through the
+        # channel and deferred to the next poll() call, exactly like Threaded.
+        # Injected via schedule(...; error=true), the same
         # primitive Julia's own runtime uses to deliver a real Ctrl+C, since
         # there's no reliable way to force a real interrupt at a precise
         # moment in a test.
@@ -145,6 +166,23 @@
         @test isempty(BigHO.poll(ex_interrupt)) # nothing lost, just nothing to report yet
         @test_throws InterruptException BigHO.poll(ex_interrupt) # deferred throw on the next call
         BigHO.shutdown!(ex_interrupt)
+
+        # Regression: an InterruptException thrown by the OBJECTIVE itself
+        # runs on a remote worker, so it crosses back to the driver through
+        # fetch() wrapped in a RemoteException (confirmed empirically --
+        # fetch() on a future whose remote task threw InterruptException
+        # raises RemoteException(pid, CapturedException(InterruptException(),
+        # ...)), not the raw InterruptException the fetch()-side test above
+        # covers), and safe_call's own contract is that InterruptException is
+        # the one exception that must never be silently recorded as an
+        # ordinary Failed outcome the way any other remote error correctly
+        # would be.
+        ex_objective_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker)
+        BigHO.start!(ex_objective_interrupt, nothing)
+        BigHO.submit!(ex_objective_interrupt, BigHO.RunEntry(1, (a=1,)), a -> throw(InterruptException()))
+        @test isempty(BigHO.poll(ex_objective_interrupt)) # nothing lost, just nothing to report yet
+        @test_throws InterruptException BigHO.poll(ex_objective_interrupt) # deferred throw on the next call
+        BigHO.shutdown!(ex_objective_interrupt)
 
         # Correctness: a full run through Hyperoptimizer/run! actually works
         # and finds a sane answer, not just the low-level interface above.
@@ -214,6 +252,41 @@
             @test outcome_by_id[i].value == i^2 # siblings unaffected, each with its own correct result
         end
         BigHO.shutdown!(ex_death)
+
+        # Regression: an interrupt reaching Hyperoptimizer/run! through
+        # DistributedQueue, with MULTIPLE other trials genuinely in flight
+        # (not just one), must correctly (a) mark ho.status Interrupted, (b)
+        # reclassify EVERY still-Pending entry to Abandoned -- not just the
+        # first one found, which is exactly what an accidental early `break`
+        # in that loop would still get away with if only ever tested at
+        # concurrency 1 (as every other executor's interrupt test in this
+        # suite is) -- and (c) actually tear down every one of those other
+        # in-flight workers once shutdown! (in run!'s own finally) finishes
+        # waiting them out, leaking none of them.
+        #
+        # Rigged by VALUE via SequentialSampler, not by wall-clock timing:
+        # trial 1 always throws immediately (once its own worker is ready);
+        # trials 2-3 always sleep far longer than trial 1's own
+        # spawn+dispatch+detect overhead could plausibly take, so they're
+        # provably still genuinely Pending -- not just recently finished --
+        # at the moment _abandon_pending! runs.
+        interrupt_others_spawned = Int[]
+        function interrupt_others_spawn_worker()
+            pid = first(addprocs(1))
+            push!(interrupt_others_spawned, pid)
+            Distributed.remotecall_eval(Main, [pid], :(using BigHO))
+            return pid
+        end
+        dq_interrupt_others = a -> a == 1 ? throw(InterruptException()) : (sleep(8.0); a^2)
+        ho_dq_interrupt = Hyperoptimizer(dq_interrupt_others, (a=Nominal([1, 2, 3]),);
+                                          sampler=SequentialSampler(), n=3)
+        @test_logs (:info, r"Aborting") run!(ho_dq_interrupt; executor=DistributedQueue(3; spawn_worker=interrupt_others_spawn_worker))
+        @test ho_dq_interrupt.status == BigHO.Interrupted
+        @test ho_dq_interrupt.n_pending == 0
+        @test length(ho_dq_interrupt.runs) == 3
+        @test count(e -> e.status == BigHO.Abandoned, ho_dq_interrupt.runs) == 3 # all 3, not just the one that threw
+        @test length(interrupt_others_spawned) == 3 # one dedicated worker per trial, as always
+        @test isempty(intersect(interrupt_others_spawned, workers())) # every one of them was torn down -- none leaked
     finally
         rmprocs(filter(!=(1), workers()))
     end

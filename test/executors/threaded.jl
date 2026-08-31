@@ -1,3 +1,20 @@
+# A minimal custom Sampler whose (sampler)(ctx) call itself throws on its
+# 3rd invocation, regardless of what the objective does -- used to exercise
+# an exception escaping run!'s own orchestration (ask!) rather than the
+# objective (which safe_call already handles separately).
+mutable struct BuggySampler <: BigHO.Sampler
+    n_calls::Int
+end
+BuggySampler() = BuggySampler(0)
+function (s::BuggySampler)(ctx)
+    s.n_calls += 1
+    s.n_calls == 3 && error("sampler bug")
+    return [s.n_calls]
+end
+BigHO.init!(::BuggySampler, ctx) = nothing
+BigHO.exhausted(::BuggySampler, ho) = false
+BigHO.on_tell!(::BuggySampler, entry) = nothing
+
 @testset "Threaded executor" begin
     @info "Testing Threaded executor"
 
@@ -126,6 +143,32 @@
     @test ho_interrupt.n_pending == 0
     @test ho_interrupt.runs[2].status == BigHO.Abandoned # the interrupted trial itself
     @test_throws ArgumentError run!(ho_interrupt) # an Interrupted optimizer can never be resumed
+
+    # Regression: an exception OTHER than InterruptException escaping run!'s
+    # own orchestration (here, a bug in a custom Sampler's ask!-time call,
+    # not the objective -- an objective's own exception never reaches this
+    # far, since safe_call already catches and records it as Failed) must
+    # still propagate to the caller, unlike InterruptException, which run!
+    # absorbs and reports gracefully -- silently swallowing a genuine bug
+    # would make it far harder to notice or debug. ho still stops and
+    # abandons any trial genuinely still in flight, so a caller who catches
+    # this and retries doesn't busy-loop on stale state (the bug this whole
+    # OptimizerStatus mechanism exists to prevent). max_concurrency=2, with
+    # the first trial resolving near-instantly and the second sleeping much
+    # longer, deterministically keeps the second trial genuinely Pending at
+    # the exact moment the sampler throws on its 3rd call.
+    ho_errored = Hyperoptimizer(a -> a == 1 ? 1.0 : (sleep(2.0); 2.0), (a=Nominal([1, 2, 3]),);
+                                 sampler=BuggySampler(), n=3)
+    @test_throws ErrorException run!(ho_errored; executor=Threaded(2))
+    @test ho_errored.status == BigHO.Errored
+    @test ho_errored.n_pending == 0
+    @test length(ho_errored.runs) == 2 # the 3rd draw's entry is never created; ask! throws before that
+    @test count(e -> e.status == BigHO.Completed, ho_errored.runs) == 1 # the fast trial
+    @test count(e -> e.status == BigHO.Abandoned, ho_errored.runs) == 1 # the still-sleeping sibling
+    @test_throws ArgumentError run!(ho_errored) # an Errored optimizer can never be resumed either
+    @test_throws ArgumentError settarget!(ho_errored, 10)
+    @test_throws ErrorException BigHO.ask!(ho_errored) # nor can the manual ask!/tell! API sneak past this
+    @test_throws ErrorException BigHO.tell!(ho_errored, ho_errored.runs[2], 42) # even for its own abandoned entry
 
     # Correctness: enough trials relative to the grid size (~500x oversampling
     # per candidate) to find the true optimum with overwhelming probability
