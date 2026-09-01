@@ -10,11 +10,16 @@ escaping its own orchestration -- e.g. a bug in a custom `Sampler` -- as
 opposed to an exception from the objective itself, which `safe_call` already
 catches and records as an ordinary `Failed` trial without ever reaching this
 far). Both `Interrupted` and `Errored` are permanent: any trials still in
-flight at that moment are abandoned rather than recoverable, and `run!`
-refuses to run again on either. They're kept as separate statuses rather
-than one, since conflating "the user asked to stop" with "something in the
-optimizer's own code is broken" would make the latter harder to notice and
-debug -- checking `ho.status` after a crash should say which one happened.
+flight at that moment are abandoned rather than recoverable (barring one
+disclosed, extremely narrow exception: a *second* genuine interrupt landing
+inside that very abandonment step itself can leave a handful of entries
+stuck `Pending` rather than `Abandoned` -- `ho.status` is still correctly
+terminal regardless, so nothing can act on `ho` further either way), and
+`run!` refuses to run again on either. They're kept as separate statuses
+rather than one, since conflating "the user asked to stop" with "something
+in the optimizer's own code is broken" would make the latter harder to
+notice and debug -- checking `ho.status` after a crash should say which one
+happened.
 
 `ho.status` describes the trials' own resolution as of the moment `run!`'s
 main loop stopped, not necessarily whether the `run!` *call* itself returned
@@ -23,7 +28,11 @@ during `run!`'s own trailing cleanup (after every trial has already resolved,
 so `ho.status` is already `Finished`/`Interrupted`/`Errored`) still propagates
 as an exception from `run!`, without retroactively changing that already-final
 status -- it stays accurate about the trials regardless of what happens during
-cleanup afterward.
+cleanup afterward. The one exception: if the main loop already stopped because
+of a genuine bug (`ho.status` already `Errored`), that already-diagnosed error
+takes priority over anything raised during cleanup afterward -- including a
+second interrupt -- which is logged (`@warn`) rather than replacing it, so the
+original bug is never lost in favor of incidental cleanup noise.
 """
 @enum OptimizerStatus Initialized Running Interrupted Errored Finished
 
@@ -281,11 +290,34 @@ function _handle_run_error(e, ho::Hyperoptimizer)
     # anything that can still block or throw" principle submit! already
     # applies to a trial's own outcome.
     ho.status = Errored
-    _abandon_pending!(ho)
+    # _abandon_pending! is ALSO wrapped here, separately from the status
+    # write above: without this, an interrupt landing inside it would skip
+    # rethrow(e) below entirely, silently replacing the already-diagnosed
+    # bug `e` with the incidental interrupt -- the same "cleanup step's
+    # exception overrides an already-determined result" hazard run!'s own
+    # shutdown!-vs-main_exception handling guards against, applied here too.
+    # Any trial still genuinely Pending when that happens stays Pending
+    # rather than Abandoned (a known, narrow, disclosed gap: ho.status is
+    # already terminal regardless, so nothing can act on it further) --
+    # but the bug that actually stopped the run is never lost.
+    try
+        _abandon_pending!(ho)
+    catch abandon_e
+        @warn "_abandon_pending! raised while already handling an earlier error -- the earlier error is what run! reports" exception = abandon_e
+    end
     rethrow(e)
 end
 function _handle_run_error(::InterruptException, ho::Hyperoptimizer)
     ho.status = Interrupted
-    _abandon_pending!(ho)
+    try
+        _abandon_pending!(ho)
+    catch abandon_e
+        # Unlike the method above, there's no earlier diagnosed bug to
+        # protect here -- so a SECOND genuine interrupt landing inside
+        # _abandon_pending! still propagates, matching every other boundary
+        # in this codebase that always lets a real interrupt through.
+        abandon_e isa InterruptException && rethrow()
+        @warn "_abandon_pending! raised while aborting the run" exception = abandon_e
+    end
     @info "Aborting hyperoptimization, returning partial results"
 end

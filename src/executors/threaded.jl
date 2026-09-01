@@ -44,17 +44,24 @@ has no way to forcibly cancel a running task, so this is the only way to
 guarantee nothing is still executing the objective in the background once
 `run!` returns (e.g. after an interrupt stopped the run early). A genuine
 InterruptException (e.g. a second Ctrl+C while already waiting out a
-runaway objective) propagates rather than being swallowed -- everything
-else surfacing here is not this function's concern to report, since every
-reportable outcome already went through the results channel: this is
-best-effort cleanup, not error reporting.
+runaway objective, or one landing inside `submit!`'s own catch-clause
+recovery `put!` -- a real yield point -- which makes that trial's task
+itself fail and so surfaces here wrapped in a `TaskFailedException`)
+propagates rather than being swallowed -- everything else surfacing here is
+not this function's concern to report, since every reportable outcome
+already went through the results channel: this is best-effort cleanup, not
+error reporting.
 """
 function shutdown!(executor::Threaded)
     for t in executor.tasks
         try
             wait(t)
         catch e
-            e isa InterruptException && rethrow()
+            if e isa InterruptException
+                rethrow()
+            elseif e isa TaskFailedException && e.task.result isa InterruptException
+                rethrow(e.task.result)
+            end
         end
     end
     return nothing

@@ -100,6 +100,27 @@ BigHO.on_tell!(::BuggySampler, entry) = nothing
     @test caught isa TaskFailedException
     @test caught.task.result isa InterruptException
 
+    # Regression: shutdown! must also recognize an interrupt that fails a
+    # TRIAL's own task (as opposed to landing directly on shutdown!'s own
+    # wait(t) call above) -- e.g. one landing inside submit!'s own
+    # catch-clause recovery put!, a real yield point on the results channel.
+    # wait() on a task that itself failed wraps the exception in
+    # TaskFailedException too, exactly like the case above, so this pins the
+    # same unwrapping logic against the OTHER way it can arise. Mirrors the
+    # identical fix already made for DistributedQueue's shutdown! in this
+    # same PR. Seeded directly, since real timing can't reliably land an
+    # interrupt inside this exact window.
+    failed_task = @async throw(InterruptException())
+    try
+        wait(failed_task)
+    catch
+    end
+    @test istaskfailed(failed_task)
+    ex_task_interrupt = Threaded(1)
+    BigHO.start!(ex_task_interrupt, nothing)
+    push!(ex_task_interrupt.tasks, failed_task)
+    @test_throws InterruptException BigHO.shutdown!(ex_task_interrupt)
+
     # Every trial gets told exactly once, with the outcome correctly
     # attributed to its own entry, regardless of completion order under real
     # concurrency -- the thing that's actually at risk in a threaded executor
