@@ -42,9 +42,9 @@ treated exactly like any other per-trial failure: the trial is recorded as
 `Failed` and the run continues.
 
 A genuine `InterruptException` thrown by the objective itself is still
-recognized as one and stops the run gracefully, the same as it would under
-`Serial`/`Threaded` -- even though it actually crosses back from the worker
-wrapped in a `RemoteException`.
+recognized as one and aborts the run (see [`OptimizerStatus`](@ref)), the
+same as it would under `Serial`/`Threaded` -- even though it actually crosses
+back from the worker wrapped in a `RemoteException`.
 """
 mutable struct DistributedQueue <: AbstractExecutor
     max_concurrency::Int
@@ -97,27 +97,18 @@ end
     shutdown!(executor::DistributedQueue)
 
 Waits for every trial this executor ever dispatched to actually resolve --
-see [`shutdown!(::Threaded)`](@ref) for why this is necessary at all. There's
-no worker pool to tear down here: each trial's own worker is already torn
-down by `submit!` once that trial's outcome has already been reported. A
-genuine InterruptException (e.g. a second Ctrl+C while already waiting out a
-hung worker, or one landing during a trial's own post-outcome teardown, which
-makes that trial's task itself fail and so surfaces here wrapped in a
-`TaskFailedException`) propagates rather than being swallowed -- everything
-else (a task failing for some other reason) is not this function's concern to
-report, since any reportable outcome already went through the results
-channel.
+see [`shutdown!(::Threaded)`](@ref) for why this is necessary at all, and for
+why any exception it surfaces here (a genuine interrupt, a hung worker,
+anything) is not this function's concern to report: any reportable outcome
+already went through the results channel. There's no worker pool to tear
+down here: each trial's own worker is already torn down by `submit!` once
+that trial's outcome has already been reported.
 """
 function shutdown!(executor::DistributedQueue)
     for t in executor.tasks
         try
             wait(t)
-        catch e
-            if e isa InterruptException
-                rethrow()
-            elseif e isa TaskFailedException && e.task.result isa InterruptException
-                rethrow(e.task.result)
-            end
+        catch
         end
     end
     return nothing
@@ -128,17 +119,14 @@ end
 # process-global Distributed.worker_lock forever -- which would otherwise
 # also block every OTHER trial's addprocs/rmprocs calls, since that lock is
 # shared process-wide, not per-worker (confirmed against the Distributed
-# stdlib's own source). A non-interrupt failure here (e.g. the worker already
-# being unreachable, or the timeout itself) is logged rather than propagated,
-# so it can't be mistaken for -- or silently overwrite -- that trial's own
-# outcome, which by the time this runs (see submit! below) has already been
-# reported regardless. A genuine InterruptException still propagates,
-# matching every other blocking call in this file (fetch, shutdown!'s wait).
+# stdlib's own source). Any failure here (including a genuine interrupt) is
+# logged rather than propagated, so it can't be mistaken for -- or silently
+# overwrite -- that trial's own outcome, which by the time this runs (see
+# submit! below) has already been reported regardless.
 function _teardown_worker(worker, timeout)
     try
         Distributed.rmprocs(worker; waitfor=timeout)
     catch e
-        e isa InterruptException && rethrow()
         @warn "Failed to tear down worker after trial" exception = e
     end
     return nothing

@@ -18,26 +18,27 @@
 
     # An InterruptException (e.g. Ctrl+C while a trial is running) must
     # propagate out of safe_call rather than being caught and recorded as a
-    # failed trial -- run! stops gracefully (ho.status = Interrupted) instead
-    # of continuing as if nothing happened. The interrupted trial itself is
-    # abandoned (never told an outcome), not left permanently Pending.
+    # failed trial -- run! doesn't try to handle it gracefully, it just
+    # rethrows it like any other error (ho.status = Errored). The interrupted
+    # trial itself is abandoned (never told an outcome), not left permanently
+    # Pending.
     let n_calls = Ref(0)
         global interrupt_after_first(a) = (n_calls[] += 1; n_calls[] == 1 ? a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first, (a=Nominal([1, 2, 3]),); n=3)
-    @test_logs (:info, r"Aborting") run!(ho_interrupt)
-    @test ho_interrupt.status == BigHO.Interrupted
+    @test_throws InterruptException run!(ho_interrupt)
+    @test ho_interrupt.status == BigHO.Errored
     @test length(results(ho_interrupt)) == 1  # the trial before the interrupt completed normally
     @test ho_interrupt.n_pending == 0
     @test ho_interrupt.runs[2].status == BigHO.Abandoned # the interrupted trial itself
-    @test_throws ArgumentError run!(ho_interrupt) # an Interrupted optimizer can never be resumed
+    @test_throws ArgumentError run!(ho_interrupt) # an Errored optimizer can never be resumed
     @test_throws ArgumentError settarget!(ho_interrupt, 10) # nor can its target be raised to feign otherwise
 
     # Regression: ask!/tell! (the manual API) must refuse a terminal
     # Hyperoptimizer too -- otherwise they're a backdoor around the
-    # "Interrupted/Errored is permanent" guarantee run!/settarget! enforce,
-    # letting new trials get silently asked and told on an optimizer that's
-    # supposed to be done.
+    # "Errored is permanent" guarantee run!/settarget! enforce, letting new
+    # trials get silently asked and told on an optimizer that's supposed to
+    # be done.
     @test_throws ArgumentError BigHO.ask!(ho_interrupt)
     @test_throws ArgumentError BigHO.tell!(ho_interrupt, ho_interrupt.runs[2], 42) # even for its own abandoned entry
 

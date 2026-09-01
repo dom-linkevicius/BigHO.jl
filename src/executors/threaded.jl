@@ -42,26 +42,17 @@ end
 Waits for every trial this executor ever spawned to actually finish -- Julia
 has no way to forcibly cancel a running task, so this is the only way to
 guarantee nothing is still executing the objective in the background once
-`run!` returns (e.g. after an interrupt stopped the run early). A genuine
-InterruptException (e.g. a second Ctrl+C while already waiting out a
-runaway objective, or one landing inside `submit!`'s own catch-clause
-recovery `put!` -- a real yield point -- which makes that trial's task
-itself fail and so surfaces here wrapped in a `TaskFailedException`)
-propagates rather than being swallowed -- everything else surfacing here is
-not this function's concern to report, since every reportable outcome
-already went through the results channel: this is best-effort cleanup, not
-error reporting.
+`run!` returns. Best-effort cleanup, not error reporting: whatever a task
+failed with (a genuine interrupt or anything else) is not this function's
+concern to report, since every reportable outcome already went through the
+results channel -- see [`run!`](@ref)'s own handling of a cleanup-time
+exception for why nothing further is done with it here.
 """
 function shutdown!(executor::Threaded)
     for t in executor.tasks
         try
             wait(t)
-        catch e
-            if e isa InterruptException
-                rethrow()
-            elseif e isa TaskFailedException && e.task.result isa InterruptException
-                rethrow(e.task.result)
-            end
+        catch
         end
     end
     return nothing
@@ -70,16 +61,20 @@ end
 function submit!(executor::Threaded, entry::RunEntry, f)
     executor.in_flight += 1
     t = Threads.@spawn begin
-        try
-            put!(executor.results, (entry, safe_call(f, entry.params, entry.pre_artefact)))
+        # outcome resolved to exactly one value BEFORE the single put! below --
+        # not inside the same try/catch as the recording put! itself -- so a
+        # failure in put! (a real yield point under genuine thread contention)
+        # can never overwrite an already-computed, valid result with an
+        # unrelated exception. safe_call only ever lets InterruptException
+        # escape uncaught; caught here so a genuine interrupt still gets
+        # reported (as this trial's outcome) instead of silently killing the
+        # task and leaving in_flight stuck, deadlocking poll().
+        outcome = try
+            safe_call(f, entry.params, entry.pre_artefact)
         catch e
-            # safe_call only ever lets InterruptException escape uncaught --
-            # forward it through the channel rather than letting it just kill
-            # this task silently, which would leave in_flight permanently
-            # off-by-one and deadlock poll() waiting for a result that could
-            # now never arrive.
-            put!(executor.results, (entry, e))
+            e
         end
+        put!(executor.results, (entry, outcome))
     end
     push!(executor.tasks, t)
     return nothing

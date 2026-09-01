@@ -79,47 +79,21 @@ BigHO.on_tell!(::BuggySampler, entry) = nothing
     BigHO.shutdown!(ex_shutdown)
     @test finished[]
 
-    # Regression: shutdown! must let a genuine InterruptException propagate
-    # (e.g. a second Ctrl+C while already waiting out a task that's still
-    # running) rather than silently swallowing it -- only non-interrupt
-    # exceptions are this function's business to absorb. wait() on a failed
-    # task wraps the real exception in a TaskFailedException, so check
-    # .task.result for the actual InterruptException underneath.
-    ex_shutdown_interrupt = Threaded(1)
-    BigHO.start!(ex_shutdown_interrupt, nothing)
-    BigHO.submit!(ex_shutdown_interrupt, BigHO.RunEntry(1, (a=1,)), _ -> (sleep(2.0); 1))
-    shutdown_task = @async BigHO.shutdown!(ex_shutdown_interrupt)
-    sleep(0.2)
-    schedule(shutdown_task, InterruptException(); error=true)
-    caught = nothing
-    try
-        wait(shutdown_task)
-    catch e
-        caught = e
-    end
-    @test caught isa TaskFailedException
-    @test caught.task.result isa InterruptException
-
-    # Regression: shutdown! must also recognize an interrupt that fails a
-    # TRIAL's own task (as opposed to landing directly on shutdown!'s own
-    # wait(t) call above) -- e.g. one landing inside submit!'s own
-    # catch-clause recovery put!, a real yield point on the results channel.
-    # wait() on a task that itself failed wraps the exception in
-    # TaskFailedException too, exactly like the case above, so this pins the
-    # same unwrapping logic against the OTHER way it can arise. Mirrors the
-    # identical fix already made for DistributedQueue's shutdown! in this
-    # same PR. Seeded directly, since real timing can't reliably land an
-    # interrupt inside this exact window.
+    # shutdown! is best-effort cleanup, not error reporting: whatever a task
+    # failed with -- a genuine interrupt or anything else -- is swallowed
+    # rather than propagated, and shutdown! still returns normally. Seeded
+    # directly (a task pre-failed with InterruptException), since real timing
+    # can't reliably land an interrupt inside a running task's own body.
     failed_task = @async throw(InterruptException())
     try
         wait(failed_task)
     catch
     end
     @test istaskfailed(failed_task)
-    ex_task_interrupt = Threaded(1)
-    BigHO.start!(ex_task_interrupt, nothing)
-    push!(ex_task_interrupt.tasks, failed_task)
-    @test_throws InterruptException BigHO.shutdown!(ex_task_interrupt)
+    ex_task_failure = Threaded(1)
+    BigHO.start!(ex_task_failure, nothing)
+    push!(ex_task_failure.tasks, failed_task)
+    BigHO.shutdown!(ex_task_failure) # does not throw
 
     # Every trial gets told exactly once, with the outcome correctly
     # attributed to its own entry, regardless of completion order under real
@@ -146,38 +120,33 @@ BigHO.on_tell!(::BuggySampler, entry) = nothing
     @test length(ho_err.runs) == 3
     @test count(e -> e.status == BigHO.Failed, ho_err.runs) == 1
 
-    # Graceful interrupt under real concurrency: an InterruptException thrown
-    # inside a spawned task must not deadlock poll() waiting forever for a
-    # result that task can now never produce -- run! stops gracefully
-    # (ho.status = Interrupted) with valid partial results, same contract as
-    # Serial, and the interrupted trial itself is abandoned rather than left
-    # permanently Pending. max_concurrency=1 keeps this deterministic (one
-    # trial in flight at a time, so the second call is unambiguously the one
-    # that interrupts).
+    # An InterruptException thrown inside a spawned task must not deadlock
+    # poll() waiting forever for a result that task can now never produce --
+    # run! just rethrows it like any other error (ho.status = Errored) with
+    # valid partial results, same contract as Serial, and the interrupted
+    # trial itself is abandoned rather than left permanently Pending.
+    # max_concurrency=1 keeps this deterministic (one trial in flight at a
+    # time, so the second call is unambiguously the one that interrupts).
     let n_calls = Ref(0)
         global interrupt_after_first_threaded(a) = (n_calls[] += 1; n_calls[] == 1 ? a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first_threaded, (a=Nominal([1, 2, 3]),); n=3)
-    @test_logs (:info, r"Aborting") run!(ho_interrupt; executor=Threaded(1))
-    @test ho_interrupt.status == BigHO.Interrupted
+    @test_throws InterruptException run!(ho_interrupt; executor=Threaded(1))
+    @test ho_interrupt.status == BigHO.Errored
     @test length(results(ho_interrupt)) == 1  # the trial before the interrupt completed normally
     @test ho_interrupt.n_pending == 0
     @test ho_interrupt.runs[2].status == BigHO.Abandoned # the interrupted trial itself
-    @test_throws ArgumentError run!(ho_interrupt) # an Interrupted optimizer can never be resumed
+    @test_throws ArgumentError run!(ho_interrupt) # an Errored optimizer can never be resumed
 
-    # Regression: an exception OTHER than InterruptException escaping run!'s
-    # own orchestration (here, a bug in a custom Sampler's ask!-time call,
-    # not the objective -- an objective's own exception never reaches this
-    # far, since safe_call already catches and records it as Failed) must
-    # still propagate to the caller, unlike InterruptException, which run!
-    # absorbs and reports gracefully -- silently swallowing a genuine bug
-    # would make it far harder to notice or debug. ho still stops and
+    # Regression: a bug in a custom Sampler's ask!-time call (not the
+    # objective -- an objective's own exception never reaches this far, since
+    # safe_call already catches and records it as Failed) must still
+    # propagate to the caller, same as an interrupt. ho still stops and
     # abandons any trial genuinely still in flight, so a caller who catches
-    # this and retries doesn't busy-loop on stale state (the bug this whole
-    # OptimizerStatus mechanism exists to prevent). max_concurrency=2, with
-    # the first trial resolving near-instantly and the second sleeping much
-    # longer, deterministically keeps the second trial genuinely Pending at
-    # the exact moment the sampler throws on its 3rd call.
+    # this and retries doesn't busy-loop on stale state. max_concurrency=2,
+    # with the first trial resolving near-instantly and the second sleeping
+    # much longer, deterministically keeps the second trial genuinely
+    # Pending at the exact moment the sampler throws on its 3rd call.
     ho_errored = Hyperoptimizer(a -> a == 1 ? 1.0 : (sleep(2.0); 2.0), (a=Nominal([1, 2, 3]),);
                                  sampler=BuggySampler(), n=3)
     # Checks the actual message, not just the exception TYPE: a prior bug in

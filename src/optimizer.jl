@@ -4,37 +4,20 @@
 A [`Hyperoptimizer`](@ref)'s lifecycle: `Initialized` (never run), `Running`
 (inside a `run!` call), `Finished` (a `run!` call ended naturally -- target
 reached or sampler exhausted -- and can still be resumed via `settarget!`
-then `run!` again), `Interrupted` (a `run!` call was stopped by a genuine
-interrupt), or `Errored` (a `run!` call was stopped by any other exception
-escaping its own orchestration -- e.g. a bug in a custom `Sampler` -- as
-opposed to an exception from the objective itself, which `safe_call` already
-catches and records as an ordinary `Failed` trial without ever reaching this
-far). Both `Interrupted` and `Errored` are permanent: any trials still in
-flight at that moment are abandoned rather than recoverable (barring one
-disclosed, extremely narrow exception: a *second* genuine interrupt landing
-inside that very abandonment step itself can leave a handful of entries
-stuck `Pending` rather than `Abandoned` -- `ho.status` is still correctly
-terminal regardless, so nothing can act on `ho` further either way), and
-`run!` refuses to run again on either. They're kept as separate statuses
-rather than one, since conflating "the user asked to stop" with "something
-in the optimizer's own code is broken" would make the latter harder to
-notice and debug -- checking `ho.status` after a crash should say which one
-happened.
-
-`ho.status` describes the trials' own resolution as of the moment `run!`'s
-main loop stopped, not necessarily whether the `run!` *call* itself returned
-without incident: a genuine interrupt or an unrelated error landing strictly
-during `run!`'s own trailing cleanup (after every trial has already resolved,
-so `ho.status` is already `Finished`/`Interrupted`/`Errored`) still propagates
-as an exception from `run!`, without retroactively changing that already-final
-status -- it stays accurate about the trials regardless of what happens during
-cleanup afterward. The one exception: if the main loop already stopped because
-of a genuine bug (`ho.status` already `Errored`), that already-diagnosed error
-takes priority over anything raised during cleanup afterward -- including a
-second interrupt -- which is logged (`@warn`) rather than replacing it, so the
-original bug is never lost in favor of incidental cleanup noise.
+then `run!` again), or `Errored` (a `run!` call was stopped by *any* exception
+escaping its own orchestration -- a genuine interrupt, a bug in a custom
+`Sampler`, anything -- as opposed to an exception from the objective itself,
+which `safe_call` already catches and records as an ordinary `Failed` trial
+without ever reaching this far). No attempt is made to distinguish *why* a
+run errored (interrupt vs. bug vs. anything else): the real exception is
+still thrown to the caller (nothing is swallowed), but `ho.status` itself
+just says `Errored` -- deliberately unspecific, since actually recovering
+from an aborted run is expected to go through checkpoint/reload rather than
+inspecting this `Hyperoptimizer` further. `Errored` is permanent: any trials
+still in flight at that moment are abandoned rather than recoverable, and
+`run!` refuses to run again.
 """
-@enum OptimizerStatus Initialized Running Interrupted Errored Finished
+@enum OptimizerStatus Initialized Running Errored Finished
 
 mutable struct Hyperoptimizer{S<:Sampler,F}
     params::Vector{Symbol}
@@ -74,12 +57,11 @@ end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
-# Interrupted and Errored are both permanent -- any trial still in flight at
-# that moment was already forcibly abandoned (see _abandon_pending!), so
-# nothing (run!, settarget!, or the manual ask!/tell! API) can meaningfully
-# continue from here. Shared so all four call sites describe it identically.
-_is_terminal(ho::Hyperoptimizer) = ho.status in (Interrupted, Errored)
-_terminal_description(ho::Hyperoptimizer) = ho.status == Interrupted ? "interrupted" : "stopped by an error"
+# Errored is permanent -- any trial still in flight at that moment was
+# already forcibly abandoned (see _abandon_pending!), so nothing (run!,
+# settarget!, or the manual ask!/tell! API) can meaningfully continue from
+# here. Shared so all four call sites describe it identically.
+_is_terminal(ho::Hyperoptimizer) = ho.status == Errored
 
 """
     settarget!(ho, n)
@@ -89,14 +71,14 @@ Raise the planned total number of trials to `n` -- how you resume a run:
 throws `ArgumentError`. Also throws if `ho.sampler` fixes its plan to the
 sample count given at construction (e.g. a Latin Hypercube sampler) -- such
 a sampler can't respond to a new target at all -- or if `ho.status` is
-`Interrupted` or `Errored`, since either one already abandoned any trials
-that were still in flight and `run!` will refuse to resume regardless. Warns
-if `ho` still has trials pending, since changing the target while trials are
-in flight isn't synchronized against them.
+`Errored`, since that already abandoned any trials that were still in flight
+and `run!` will refuse to resume regardless. Warns if `ho` still has trials
+pending, since changing the target while trials are in flight isn't
+synchronized against them.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
     _is_terminal(ho) &&
-        throw(ArgumentError("settarget!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot be resumed -- construct a new Hyperoptimizer to continue"))
+        throw(ArgumentError("settarget!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     ho.n_pending > 0 &&
         @warn "settarget!: $(ho.n_pending) trial(s) still pending -- changing the target while trials are in flight may race with them"
     ho.n !== nothing && n < ho.n &&
@@ -114,14 +96,13 @@ end
 Draw the next candidate from `ho.sampler` and register a `Pending`
 [`RunEntry`](@ref). Throws if `ho`'s sampler is exhausted, if `ho.n` has
 already been reached (call `settarget!` to raise it first), or if `ho.status`
-is `Interrupted` or `Errored` -- both are permanent, so this manual API can't
-be used to sneak new trials onto an optimizer `run!`/`settarget!` already
-refuse to touch.
+is `Errored` -- permanent, so this manual API can't be used to sneak new
+trials onto an optimizer `run!`/`settarget!` already refuse to touch.
 """
 function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
         _is_terminal(ho) &&
-            throw(ArgumentError("ask!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot produce new trials -- construct a new Hyperoptimizer to continue"))
+            throw(ArgumentError("ask!: this Hyperoptimizer already errored and cannot produce new trials -- construct a new Hyperoptimizer to continue"))
         exhausted(ho.sampler, ho) && throw(ArgumentError("Hyperoptimizer's sampler is exhausted: no more candidates available"))
         reached_target(ho) && throw(ArgumentError("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more"))
         ctx = AskContext(ho.candidates, length(ho.runs), ho.n)
@@ -150,16 +131,15 @@ end
 Record `outcome` (the objective's return value, or a caught exception) for
 `entry`, classifying it via [`finalize_entry`](@ref) and updating the cached
 optimum. The sole mutation point for `ho.runs`/`ho.completed` outside of
-`_abandon_pending!`'s direct reclassification on interrupt/error. Throws if
-`ho.status` is `Interrupted` or `Errored` -- both already forcibly abandoned
-every still-Pending entry, so recording a fresh outcome here (e.g. for one
-of those very entries) would silently resurrect it and could double-count
-`ho.n_pending`.
+`_abandon_pending!`'s direct reclassification on error. Throws if `ho.status`
+is `Errored` -- already forcibly abandoned every still-Pending entry, so
+recording a fresh outcome here (e.g. for one of those very entries) would
+silently resurrect it and could double-count `ho.n_pending`.
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
         _is_terminal(ho) &&
-            throw(ArgumentError("tell!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot record new outcomes -- construct a new Hyperoptimizer to continue"))
+            throw(ArgumentError("tell!: this Hyperoptimizer already errored and cannot record new outcomes -- construct a new Hyperoptimizer to continue"))
         told = finalize_entry(ho.runs[entry.id], outcome)
         ho.runs[told.id] = told
         ho.n_pending -= 1
@@ -176,27 +156,26 @@ end
     run!(ho; executor=Serial())
 
 Drive `ho` to completion (until `ho.n` trials have completed, the sampler is
-exhausted, the run is interrupted, or some other exception escapes `run!`'s
-own orchestration -- e.g. a bug in a custom `Sampler`; an exception from the
+exhausted, or *any* exception escapes `run!`'s own orchestration -- a genuine
+interrupt, a bug in a custom `Sampler`, anything; an exception from the
 objective itself never reaches this far, since `safe_call` already catches
 and records it as an ordinary `Failed` trial), dispatching evaluations
-through `executor`. To resume a finished run, call `settarget!(ho, n)` then
-`run!` again. Throws if `ho.status` is already `Interrupted` or `Errored`,
-since either one already abandoned any trials that were still in flight --
-construct a new `Hyperoptimizer` instead. Warns and returns without doing
-anything if `ho` already has nothing to do: its target already reached
-(call `settarget!` first), or its sampler exhausted (with a fixed plan, no
-further call could ever produce more trials for it; see
-[`FixedPlanSampler`](@ref)). Note that a call can still raise even after every
-trial has already resolved and `ho.status` is already terminal, if cleanup
-itself (tearing down an executor's workers) is interrupted or fails -- see
-[`OptimizerStatus`](@ref).
+through `executor`. Whatever the exception was, it's rethrown to the caller
+unchanged and `ho.status` becomes `Errored` -- no attempt is made to
+distinguish an interrupt from a bug (see [`OptimizerStatus`](@ref)). To
+resume a finished run, call `settarget!(ho, n)` then `run!` again. Throws if
+`ho.status` is already `Errored`, since that already abandoned any trials
+that were still in flight -- construct a new `Hyperoptimizer` instead. Warns
+and returns without doing anything if `ho` already has nothing to do: its
+target already reached (call `settarget!` first), or its sampler exhausted
+(with a fixed plan, no further call could ever produce more trials for it;
+see [`FixedPlanSampler`](@ref)).
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     _is_terminal(ho) &&
-        throw(ArgumentError("run!: this Hyperoptimizer was $(_terminal_description(ho)) and cannot be resumed -- construct a new Hyperoptimizer to continue"))
+        throw(ArgumentError("run!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     if reached_target(ho)
         @warn "run!: Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before calling run! again"
         return ho
@@ -211,54 +190,38 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     end
     ho.status = Running
     start!(executor, ho)
-    # main_exception, if set, is whatever _handle_run_error's non-InterruptException
-    # method rethrew below -- caught here (rather than left to propagate through a
-    # single try/finally) so shutdown! still runs unconditionally, but a SECOND
-    # exception from shutdown! itself (e.g. a genuine interrupt while it waits out a
-    # still-running trial) can never silently replace it -- see shutdown!'s own catch
-    # below for why this matters at all. Stays nothing on a graceful interrupt (that
-    # method doesn't rethrow), matching run!'s existing "return gracefully" contract.
-    main_exception = nothing
     try
-        try
-            while true
-                while !_should_stop_asking(ho) && capacity(executor) > 0
-                    entry = ask!(ho)
-                    submit!(executor, entry, ho.objective)
-                end
-                for (entry, outcome) in poll(executor)
-                    tell!(ho, entry, outcome)
-                end
-                _should_stop_asking(ho) && ho.n_pending == 0 && break
+        while true
+            while !_should_stop_asking(ho) && capacity(executor) > 0
+                entry = ask!(ho)
+                submit!(executor, entry, ho.objective)
             end
-            ho.status = Finished
-        catch e
-            _handle_run_error(e, ho)
+            for (entry, outcome) in poll(executor)
+                tell!(ho, entry, outcome)
+            end
+            _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
+        ho.status = Finished
     catch e
-        main_exception = e
+        _handle_run_error(e, ho)
+    finally
+        # Best-effort cleanup, not error reporting: whatever this raises is
+        # logged, never allowed to replace the real exception above (or to
+        # stop it from propagating) -- shutdown! runs inside its own try/catch
+        # specifically so it can't throw out of this finally block.
+        try
+            shutdown!(executor)
+        catch shutdown_e
+            @warn "shutdown! raised during cleanup" exception = shutdown_e
+        end
     end
-    try
-        shutdown!(executor)
-    catch shutdown_e
-        main_exception === nothing && rethrow(shutdown_e)
-        @warn "shutdown! raised while already handling an earlier error -- the earlier error is what run! reports" exception = shutdown_e
-    end
-    # throw, not rethrow -- by this point both enclosing catch blocks have
-    # already returned, so we're outside the dynamic extent rethrow requires;
-    # main_exception is just a captured value, and throw raises it directly
-    # (type and message intact; only the backtrace now starts here instead of
-    # at the original error site, which is a fair trade against rethrow
-    # raising Julia's own "not allowed outside a catch block" error instead).
-    main_exception === nothing || throw(main_exception)
     return ho
 end
 
-# Trials still in flight at the moment ho stops abnormally (interrupt or
-# error) are abandoned, not recoverable (their eventual outcome, if any, is
-# never told) -- give them an honest terminal status instead of leaving them
-# looking indistinguishable from "still in flight" forever. Shared by both
-# _handle_run_error methods below.
+# Trials still in flight at the moment ho errors are abandoned, not
+# recoverable (their eventual outcome, if any, is never told) -- give them an
+# honest terminal status instead of leaving them looking indistinguishable
+# from "still in flight" forever.
 function _abandon_pending!(ho::Hyperoptimizer)
     lock(ho.lock) do
         for (i, entry) in enumerate(ho.runs)
@@ -271,53 +234,13 @@ function _abandon_pending!(ho::Hyperoptimizer)
     return nothing
 end
 
-# Any exception other than InterruptException reaching this far came from
-# run!'s own orchestration (ask!/poll!/tell!), not the objective -- safe_call
-# already catches and records an objective's own exception as an ordinary
-# Failed trial, so this is a bug in the optimizer's own code (most likely a
-# custom Sampler). Unlike InterruptException, this is never meant to be
-# silently absorbed: ho is still stopped and its in-flight trials abandoned
-# (so a caller who blindly retries doesn't busy-loop on stale state), but the
-# exception itself still propagates, since swallowing a genuine bug would
-# make it far harder to notice or debug.
+# ANY exception reaching this far (a genuine interrupt, a bug in a custom
+# Sampler, anything) is treated identically: ho.status becomes Errored, any
+# trial still in flight is abandoned, and the real exception is rethrown to
+# the caller unchanged -- see OptimizerStatus for why no attempt is made to
+# distinguish further.
 function _handle_run_error(e, ho::Hyperoptimizer)
-    # Status set BEFORE _abandon_pending! runs, not after: _abandon_pending!
-    # itself blocks (lock(ho.lock)) and so can in principle be interrupted --
-    # if it were, a status write placed after it would never be reached,
-    # leaving ho.status stuck at the non-terminal Running forever. A plain
-    # field assignment can't itself throw, so capturing it first is safe
-    # regardless of what happens next -- same "capture the inert value before
-    # anything that can still block or throw" principle submit! already
-    # applies to a trial's own outcome.
     ho.status = Errored
-    # _abandon_pending! is ALSO wrapped here, separately from the status
-    # write above: without this, an interrupt landing inside it would skip
-    # rethrow(e) below entirely, silently replacing the already-diagnosed
-    # bug `e` with the incidental interrupt -- the same "cleanup step's
-    # exception overrides an already-determined result" hazard run!'s own
-    # shutdown!-vs-main_exception handling guards against, applied here too.
-    # Any trial still genuinely Pending when that happens stays Pending
-    # rather than Abandoned (a known, narrow, disclosed gap: ho.status is
-    # already terminal regardless, so nothing can act on it further) --
-    # but the bug that actually stopped the run is never lost.
-    try
-        _abandon_pending!(ho)
-    catch abandon_e
-        @warn "_abandon_pending! raised while already handling an earlier error -- the earlier error is what run! reports" exception = abandon_e
-    end
+    _abandon_pending!(ho)
     rethrow(e)
-end
-function _handle_run_error(::InterruptException, ho::Hyperoptimizer)
-    ho.status = Interrupted
-    try
-        _abandon_pending!(ho)
-    catch abandon_e
-        # Unlike the method above, there's no earlier diagnosed bug to
-        # protect here -- so a SECOND genuine interrupt landing inside
-        # _abandon_pending! still propagates, matching every other boundary
-        # in this codebase that always lets a real interrupt through.
-        abandon_e isa InterruptException && rethrow()
-        @warn "_abandon_pending! raised while aborting the run" exception = abandon_e
-    end
-    @info "Aborting hyperoptimization, returning partial results"
 end
