@@ -200,7 +200,7 @@ BigHO.on_tell!(::SequentialSampler, entry) = nothing
             return pid
         end
         interrupt_others_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
-        dq_interrupt_others = a -> (sleep(8.0); a^2)
+        dq_interrupt_others = a -> (sleep(30.0); a^2) # generous margin -- Windows CI's slower process spawn eats into it
         ex_interrupt_others = DistributedQueue(3; spawn_worker=interrupt_others_spawn_worker, setup_worker=interrupt_others_setup_worker)
         ho_dq_interrupt = Hyperoptimizer(dq_interrupt_others, (a=Nominal([1, 2, 3]),);
                                           sampler=SequentialSampler(), n=3)
