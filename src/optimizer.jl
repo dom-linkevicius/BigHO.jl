@@ -1,7 +1,8 @@
 """
     OptimizerStatus
 
-A [`Hyperoptimizer`](@ref)'s lifecycle: `Initialized`, `Running`, `Finished` (can be resumed via `settarget!`+`run!`), or `Errored` (any exception escaping `run!`'s orchestration, permanent -- in-flight trials abandoned, the real exception still rethrown to the caller).
+A [`Hyperoptimizer`](@ref)'s lifecycle: `Initialized`, `Running`, `Finished` (resumable via `settarget!`+`run!`), or `Errored` (permanent).
+`Errored` covers any exception escaping `run!`'s orchestration -- in-flight trials abandoned, the exception rethrown to the caller.
 """
 @enum OptimizerStatus Initialized Running Errored Finished
 
@@ -22,7 +23,8 @@ end
 """
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
 
-Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref) per parameter name; `objective` is called as `objective(params...)` unless wrapped in [`Stateful`](@ref). `n`, if given, bounds the total number of trials. Only ever minimizes.
+Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref) per parameter name; `n` bounds the total trials.
+`objective` is called as `objective(params...)`, unless wrapped in [`Stateful`](@ref); only ever minimizes.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
@@ -45,7 +47,8 @@ _is_terminal(ho::Hyperoptimizer) = ho.status == Errored
 """
     settarget!(ho, n)
 
-Raise the planned total number of trials to `n` -- how you resume a run. Only raising is allowed; throws if lowering, if `ho.status` is `Errored`, or if the sampler has a fixed plan (e.g. Latin Hypercube). Warns if trials are still pending.
+Raise the planned total number of trials to `n` -- how you resume a run.
+Throws if lowering, if `ho.status` is `Errored`, or the sampler has a fixed plan; warns if trials are still pending.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
     _is_terminal(ho) &&
@@ -64,7 +67,8 @@ end
 """
     ask!(ho) -> RunEntry
 
-Draw the next candidate from `ho.sampler` and register a `Pending` [`RunEntry`](@ref). Throws if the sampler is exhausted, `ho.n` is already reached, or `ho.status` is `Errored`.
+Draw the next candidate from `ho.sampler` and register a `Pending` [`RunEntry`](@ref).
+Throws if the sampler is exhausted, `ho.n` is already reached, or `ho.status` is `Errored`.
 """
 function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
@@ -94,7 +98,8 @@ end
 """
     tell!(ho, entry, outcome)
 
-Record `outcome` for `entry`, classifying it via [`finalize_entry`](@ref) and updating the cached optimum. Throws if `ho.status` is `Errored`, since every still-`Pending` entry was already abandoned.
+Record `outcome` for `entry` via [`finalize_entry`](@ref), updating the cached optimum.
+Throws if `ho.status` is `Errored` (every `Pending` entry was already abandoned).
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
@@ -115,7 +120,9 @@ end
 """
     run!(ho; executor=Serial())
 
-Drive `ho` to completion, dispatching evaluations through `executor`. Any exception escaping `run!`'s own orchestration (not the objective, which `safe_call` already records as a `Failed` trial) is rethrown to the caller and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)). To resume a finished run, call `settarget!(ho, n)` then `run!` again. Throws if already `Errored`; warns and no-ops if there's nothing left to do.
+Drive `ho` to completion, dispatching evaluations through `executor`.
+Any exception escaping `run!`'s own orchestration (not the objective) is rethrown and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)).
+To resume, call `settarget!(ho, n)` then `run!` again; throws if already `Errored`.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 

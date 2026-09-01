@@ -36,17 +36,9 @@ end
 """
     shutdown!(executor::Threaded)
 
-Waits for every trial this executor ever spawned to actually finish -- Julia can't forcibly cancel a running task, so this is the only way to guarantee nothing is still executing in the background once `run!` returns. A still-running task is sent an interrupt first (best-effort). A failed task's exception (a genuine interrupt or anything else) propagates from `wait` rather than being swallowed.
+Waits for every trial to finish -- Julia can't forcibly cancel a task. Does NOT interrupt a still-running one first: racing `schedule(t, exc; error=true)` against the task's own completion can crash the whole process, not just raise an exception.
 """
 function shutdown!(executor::Threaded)
-    for t in executor.tasks
-        if !istaskdone(t)
-            try
-                schedule(t, InterruptException(); error=true)
-            catch
-            end
-        end
-    end
     for t in executor.tasks
         wait(t)
     end

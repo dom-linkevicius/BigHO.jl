@@ -1,18 +1,20 @@
 """
     DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout=30)
 
-Runs each trial on its own freshly spawned worker process, torn down again as soon as that trial resolves, up to `max_concurrency` trials in flight at once. No worker is ever reused across trials.
+Runs each trial on its own freshly spawned worker, torn down when it resolves -- up to `max_concurrency` at once, never reused.
 
-`spawn_worker()` must return the new worker's pid; it's called synchronously in `submit!`, before that trial's task even exists, so the pid is always known immediately. `setup_worker(pid)` then runs asynchronously to prepare the worker (load packages, etc.) -- defaults to a no-op. e.g.:
+`spawn_worker()` must return the new worker's pid; called synchronously, so the pid is always known immediately.
+`setup_worker(pid)` then runs asynchronously to prepare it (load packages, etc.) -- defaults to a no-op. e.g.:
 
 ```julia
 spawn_worker = () -> first(Distributed.addprocs(1))
 setup_worker = pid -> Distributed.remotecall_eval(Main, [pid], :(using BigHO; using MyObjectiveDeps))
 ```
 
-A worker dying mid-trial, or `spawn_worker`/`setup_worker` failing, is reported as an ordinary `Failed` trial rather than aborting the run. `entry.params`/`entry.pre_artefact`/the objective itself must all be serializable.
+A worker dying, or `spawn_worker`/`setup_worker` failing, is just a `Failed` trial, not an aborted run.
+`entry.params`/`entry.pre_artefact`/the objective must all be serializable.
 
-A local `InterruptException` (e.g. Ctrl+C) aborts the run like any other executor; one raised by the objective itself, running remotely, can't reach the driver and is just an ordinary `Failed` trial.
+A local Ctrl+C aborts the run as usual; one raised remotely by the objective can't reach the driver -- just a `Failed` trial.
 """
 mutable struct DistributedQueue <: AbstractExecutor
     max_concurrency::Int
@@ -36,7 +38,8 @@ end
 """
     DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout=30)
 
-`teardown_timeout` bounds (in seconds) how long `submit!`'s `rmprocs` call waits for a worker to terminate. Must be positive: `0` means something different to `rmprocs` (unbounded fire-and-forget removal), not "don't wait", so it's rejected -- use `Inf` for that instead.
+`teardown_timeout` bounds (seconds) how long `submit!`'s `rmprocs` call waits for a worker to die.
+`0` means "fire-and-forget, unbounded" to `rmprocs`, not "don't wait" -- rejected; use `Inf` instead.
 """
 function DistributedQueue(max_concurrency::Int=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout::Real=30)
     return DistributedQueue(max_concurrency, spawn_worker, setup_worker, teardown_timeout, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Tuple{Int,Task}[])
@@ -53,7 +56,8 @@ end
 """
     shutdown!(executor::DistributedQueue)
 
-Shuts down NOW: any trial not yet done has its worker killed directly rather than waited for. See [`shutdown!(::Threaded)`](@ref) for why every task is still waited on afterward, and why a failed task's exception propagates rather than being swallowed.
+Shuts down NOW: kills any still-running trial's worker directly rather than waiting for it.
+See [`shutdown!(::Threaded)`](@ref) for why every task is still waited on afterward.
 """
 function shutdown!(executor::DistributedQueue)
     for (pid, t) in executor.tasks
