@@ -1,183 +1,106 @@
 """
-    DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker)
+    DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout=30)
 
-Runs each trial on its own freshly spawned worker process (via
-`spawn_worker()`, which must return the new worker's pid), torn down again
-as soon as that one trial resolves -- up to `max_concurrency` trials in
-flight at once. No worker is ever reused across trials: this library targets
-costly trials (often taking hours), for which process-spawn/precompilation
-overhead is negligible, so the stronger isolation of a fresh process per
-trial (no risk of one trial's state leaking into another's) is worth more
-than the small amortized cost reuse would save.
+Runs each trial on its own freshly spawned worker process, torn down again as soon as that trial resolves, up to `max_concurrency` trials in flight at once. No worker is ever reused across trials.
 
-`spawn_worker` is required, with no default -- there's no generic
-implementation that could work for an arbitrary objective. At minimum it
-must load this package onto the new worker (a bare `Distributed.addprocs(1)`
-leaves a worker with nothing loaded, so even this package's own internals
-would fail to resolve there), and in practice it usually also needs to load
-whatever packages or helper functions the objective itself depends on --
-e.g.:
+`spawn_worker()` must return the new worker's pid; it's called synchronously in `submit!`, before that trial's task even exists, so the pid is always known immediately. `setup_worker(pid)` then runs asynchronously to prepare the worker (load packages, etc.) -- defaults to a no-op. e.g.:
 
 ```julia
-spawn_worker = () -> begin
-    pid = first(Distributed.addprocs(1))
-    Distributed.remotecall_eval(Main, [pid], :(using BigHO; using MyObjectiveDeps))
-    return pid
-end
+spawn_worker = () -> first(Distributed.addprocs(1))
+setup_worker = pid -> Distributed.remotecall_eval(Main, [pid], :(using BigHO; using MyObjectiveDeps))
 ```
 
-Tolerating worker death is still the point: if a worker dies mid-trial, that
-trial is reported as failing (a `ProcessExitedException` is just another
-non-Real outcome to `finalize_entry`, same as any other exception) rather
-than the run aborting. `entry.params`/`entry.pre_artefact`/the objective
-function itself must all be serializable, since they cross process
-boundaries.
+A worker dying mid-trial, or `spawn_worker`/`setup_worker` failing, is reported as an ordinary `Failed` trial rather than aborting the run. `entry.params`/`entry.pre_artefact`/the objective itself must all be serializable.
 
-If `spawn_worker` raises *after* it has already provisioned a worker process
-(e.g. `addprocs` itself succeeded but a later setup step, like the
-`remotecall_eval` above, failed), it is responsible for tearing that worker
-down itself before the exception escapes -- `submit!` is never given a pid it
-wasn't returned, so it has no way to reap it. Such an exception is otherwise
-treated exactly like any other per-trial failure: the trial is recorded as
-`Failed` and the run continues.
-
-A genuine `InterruptException` thrown by the objective itself is still
-recognized as one and aborts the run (see [`OptimizerStatus`](@ref)), the
-same as it would under `Serial`/`Threaded` -- even though it actually crosses
-back from the worker wrapped in a `RemoteException`.
+A local `InterruptException` (e.g. Ctrl+C) aborts the run like any other executor; one raised by the objective itself, running remotely, can't reach the driver and is just an ordinary `Failed` trial.
 """
 mutable struct DistributedQueue <: AbstractExecutor
     max_concurrency::Int
     spawn_worker::Any
+    setup_worker::Any
     teardown_timeout::Real
     results::Channel{Tuple{RunEntry,Any}}
     in_flight::Int
     pending_exception::Union{Exception,Nothing}
-    tasks::Vector{Task}
+    # Each trial's pid alongside its task, so shutdown! can kill the worker directly.
+    tasks::Vector{Tuple{Int,Task}}
 
-    # Defining this inner constructor suppresses Julia's default positional
-    # one, which would otherwise let max_concurrency<1 bypass the outer
-    # convenience constructor's validation below entirely.
-    function DistributedQueue(max_concurrency::Int, spawn_worker, teardown_timeout::Real, results::Channel{Tuple{RunEntry,Any}}, in_flight::Int, pending_exception::Union{Exception,Nothing}, tasks::Vector{Task})
+    # Suppresses the default positional constructor, which would bypass validation below.
+    function DistributedQueue(max_concurrency::Int, spawn_worker, setup_worker, teardown_timeout::Real, results::Channel{Tuple{RunEntry,Any}}, in_flight::Int, pending_exception::Union{Exception,Nothing}, tasks::Vector{Tuple{Int,Task}})
         max_concurrency >= 1 || throw(ArgumentError("max_concurrency must be >= 1, got $max_concurrency"))
         teardown_timeout > 0 ||
             throw(ArgumentError("teardown_timeout must be a positive number of seconds (got $teardown_timeout) -- 0 disables Distributed.rmprocs's blocking wait entirely, silently reinstating an unbounded worker_lock hold"))
-        return new(max_concurrency, spawn_worker, teardown_timeout, results, in_flight, pending_exception, tasks)
+        return new(max_concurrency, spawn_worker, setup_worker, teardown_timeout, results, in_flight, pending_exception, tasks)
     end
 end
 """
-    DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker, teardown_timeout=30)
+    DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout=30)
 
-`teardown_timeout` bounds (in seconds) how long a single trial's teardown will
-wait for its worker to actually terminate -- see `_teardown_worker` for why
-this matters. The default roughly matches `LocalManager`'s own kill()
-escalation window; a custom `ClusterManager` whose job cancellation takes
-longer should raise it. Must be a positive, non-NaN number: `0` is rejected
-rather than accepted as "don't wait" -- to `Distributed.rmprocs`, `waitfor=0`
-isn't a very short timeout, it's a *different* code path (an unawaited,
-fire-and-forget background removal with no bound at all), which would
-silently reinstate the exact unbounded hang this field exists to prevent.
-`Inf` is allowed as a deliberate, informed way to opt back into an unbounded
-wait, since it takes the normal bounded-wait code path with an effectively
-infinite bound, not the `waitfor==0` special case.
+`teardown_timeout` bounds (in seconds) how long `submit!`'s `rmprocs` call waits for a worker to terminate. Must be positive: `0` means something different to `rmprocs` (unbounded fire-and-forget removal), not "don't wait", so it's rejected -- use `Inf` for that instead.
 """
-function DistributedQueue(max_concurrency::Int=Sys.CPU_THREADS; spawn_worker, teardown_timeout::Real=30)
-    return DistributedQueue(max_concurrency, spawn_worker, teardown_timeout, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Task[])
+function DistributedQueue(max_concurrency::Int=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout::Real=30)
+    return DistributedQueue(max_concurrency, spawn_worker, setup_worker, teardown_timeout, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Tuple{Int,Task}[])
 end
 
 function start!(executor::DistributedQueue, ho)
     executor.results = Channel{Tuple{RunEntry,Any}}(Inf)
     executor.in_flight = 0
     executor.pending_exception = nothing
-    executor.tasks = Task[]
+    executor.tasks = Tuple{Int,Task}[]
     return nothing
 end
 
 """
     shutdown!(executor::DistributedQueue)
 
-Waits for every trial this executor ever dispatched to actually resolve --
-see [`shutdown!(::Threaded)`](@ref) for why this is necessary at all, and for
-why any exception it surfaces here (a genuine interrupt, a hung worker,
-anything) is not this function's concern to report: any reportable outcome
-already went through the results channel. There's no worker pool to tear
-down here: each trial's own worker is already torn down by `submit!` once
-that trial's outcome has already been reported.
+Shuts down NOW: any trial not yet done has its worker killed directly rather than waited for. See [`shutdown!(::Threaded)`](@ref) for why every task is still waited on afterward, and why a failed task's exception propagates rather than being swallowed.
 """
 function shutdown!(executor::DistributedQueue)
-    for t in executor.tasks
-        try
-            wait(t)
-        catch
+    for (pid, t) in executor.tasks
+        if !istaskdone(t)
+            try
+                Distributed.rmprocs(pid)
+            catch
+            end
         end
     end
-    return nothing
-end
-
-# Tears down a trial's worker, bounded by timeout (rmprocs's own waitfor) so
-# one worker that never cleanly acknowledges termination can't hold Julia's
-# process-global Distributed.worker_lock forever -- which would otherwise
-# also block every OTHER trial's addprocs/rmprocs calls, since that lock is
-# shared process-wide, not per-worker (confirmed against the Distributed
-# stdlib's own source). Any failure here (including a genuine interrupt) is
-# logged rather than propagated, so it can't be mistaken for -- or silently
-# overwrite -- that trial's own outcome, which by the time this runs (see
-# submit! below) has already been reported regardless.
-function _teardown_worker(worker, timeout)
-    try
-        Distributed.rmprocs(worker; waitfor=timeout)
-    catch e
-        @warn "Failed to tear down worker after trial" exception = e
+    for (_, t) in executor.tasks
+        wait(t)
     end
     return nothing
 end
-
-# A genuine InterruptException thrown by the objective itself runs on a
-# remote worker, so it crosses back to the driver through fetch() wrapped in
-# a RemoteException, not as the raw InterruptException poll()/_take_one!
-# check for (confirmed empirically: fetch() on a future whose remote task
-# threw InterruptException raises RemoteException(pid, CapturedException(
-# InterruptException(), ...)), not InterruptException itself). Unwrapped
-# right where it's caught so everything downstream only ever has to
-# recognize one shape of "this was really an interrupt" -- any other
-# RemoteException (an unrelated remote error, e.g. a deserialization
-# failure) is left untouched and still reported as an ordinary failed
-# outcome, exactly as before.
-_unwrap_remote_interrupt(e) = e isa RemoteException && e.captured.ex isa InterruptException ? e.captured.ex : e
 
 function submit!(executor::DistributedQueue, entry::RunEntry, f)
     executor.in_flight += 1
+    # Synchronous, so the pid (or failure) is known before any task exists.
+    worker = try
+        executor.spawn_worker()
+    catch e
+        e
+    end
+    if worker isa Exception
+        # An ordinary Failed trial; no worker/task exists, so report it directly.
+        put!(executor.results, (entry, worker))
+        return nothing
+    end
     t = @async begin
-        # outcome is resolved to exactly one value -- the fetched result or
-        # the caught exception -- and put! onto the results channel BEFORE
-        # teardown runs below, so a genuine interrupt landing during teardown
-        # can never retroactively override an already-obtained outcome (Julia
-        # finally-block semantics would otherwise let it do exactly that).
-        worker = nothing
+        # Resolved and put! BEFORE teardown, so a later interrupt can't override it.
         outcome = try
-            worker = executor.spawn_worker()
+            executor.setup_worker(worker)
             future = Distributed.remotecall(safe_call, worker, f, entry.params, entry.pre_artefact)
             fetch(future)
         catch e
-            _unwrap_remote_interrupt(e)
+            e
         end
         put!(executor.results, (entry, outcome))
-        # Always torn down -- whether this trial succeeded, failed, or the
-        # worker itself died underneath it (in which case this is a harmless
-        # no-op on an already-gone pid) -- unless spawn_worker() itself never
-        # returned a pid (see the module docstring's note on spawn_worker's
-        # own cleanup responsibility in that case). A genuine InterruptException
-        # here escapes this task uncaught; shutdown! recognizes and rethrows it.
-        worker !== nothing && _teardown_worker(worker, executor.teardown_timeout)
+        # Always torn down, even on failure -- a no-op if the worker's already gone.
+        Distributed.rmprocs(worker; waitfor=executor.teardown_timeout)
     end
-    push!(executor.tasks, t)
+    push!(executor.tasks, (worker, t))
     return nothing
 end
 
-# Takes one result off executor's channel into out, unless it's an
-# InterruptException, which is stashed on executor.pending_exception instead
-# (see poll below for why). Shared by both call sites in poll so they can't
-# drift out of sync with each other.
+# Takes one result into out, unless it's an InterruptException (stashed on pending_exception instead).
 function _take_one!(executor::DistributedQueue, out)
     entry, outcome = take!(executor.results)
     executor.in_flight -= 1
@@ -189,15 +112,9 @@ function _take_one!(executor::DistributedQueue, out)
     return out
 end
 
-# Blocks for the first result only if one is actually in flight (per
-# AbstractExecutor's `poll` contract); drains any others already sitting in
-# the channel so run! doesn't call back in for results that are ready now.
+# Blocks for the first result only if something's in flight; drains any others already ready.
 function poll(executor::DistributedQueue)
-    # A pending exception from a PREVIOUS call is thrown first -- see
-    # poll(::Threaded) for why this deferred-throw scheme is needed at all
-    # (a real InterruptException landing inside one of this executor's own
-    # supervisory tasks, rather than a worker dying, which is instead
-    # forwarded as a normal per-trial failure in _take_one! above).
+    # A pending exception from a PREVIOUS call is thrown first -- see poll(::Threaded).
     executor.pending_exception !== nothing && throw(executor.pending_exception)
     executor.in_flight == 0 && return Tuple{RunEntry,Any}[]
     out = _take_one!(executor, Tuple{RunEntry,Any}[])

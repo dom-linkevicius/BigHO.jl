@@ -7,8 +7,8 @@ The complete record of one trial: what was asked (`id`, `params`,
 `metadata`) and, once told, what happened (`status`, `value`,
 `post_artefact`). Immutable -- `ho.runs[id]` is always replaced with a new
 `RunEntry` rather than mutated in place, whether by `tell!` (an ordinary
-outcome) or by `_abandon_pending!` (forcibly reclassified to `Abandoned`
-after an interrupt or error). `value` is `missing` unless `status ===
+outcome) or by `_handle_run_error` (forcibly reclassified to `Abandoned`
+after an error). `value` is `missing` unless `status ===
 Completed`. `pre_artefact`/`post_artefact` are `nothing` unless the
 objective is [`Stateful`](@ref).
 """

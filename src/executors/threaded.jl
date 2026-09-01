@@ -13,10 +13,7 @@ mutable struct Threaded <: AbstractExecutor
     pending_exception::Union{Exception,Nothing}
     tasks::Vector{Task}
 
-    # Defining this inner constructor suppresses Julia's default positional
-    # one, which would otherwise let max_concurrency<1 bypass the outer
-    # convenience constructor's validation below entirely (e.g.
-    # Threaded(0, Channel{Tuple{RunEntry,Any}}(Inf), 0, nothing, Task[])).
+    # Suppresses the default positional constructor, which would bypass validation below.
     function Threaded(max_concurrency::Int, results::Channel{Tuple{RunEntry,Any}}, in_flight::Int, pending_exception::Union{Exception,Nothing}, tasks::Vector{Task})
         max_concurrency >= 1 || throw(ArgumentError("max_concurrency must be >= 1, got $max_concurrency"))
         return new(max_concurrency, results, in_flight, pending_exception, tasks)
@@ -39,21 +36,19 @@ end
 """
     shutdown!(executor::Threaded)
 
-Waits for every trial this executor ever spawned to actually finish -- Julia
-has no way to forcibly cancel a running task, so this is the only way to
-guarantee nothing is still executing the objective in the background once
-`run!` returns. Best-effort cleanup, not error reporting: whatever a task
-failed with (a genuine interrupt or anything else) is not this function's
-concern to report, since every reportable outcome already went through the
-results channel -- see [`run!`](@ref)'s own handling of a cleanup-time
-exception for why nothing further is done with it here.
+Waits for every trial this executor ever spawned to actually finish -- Julia can't forcibly cancel a running task, so this is the only way to guarantee nothing is still executing in the background once `run!` returns. A still-running task is sent an interrupt first (best-effort). A failed task's exception (a genuine interrupt or anything else) propagates from `wait` rather than being swallowed.
 """
 function shutdown!(executor::Threaded)
     for t in executor.tasks
-        try
-            wait(t)
-        catch
+        if !istaskdone(t)
+            try
+                schedule(t, InterruptException(); error=true)
+            catch
+            end
         end
+    end
+    for t in executor.tasks
+        wait(t)
     end
     return nothing
 end
@@ -61,14 +56,7 @@ end
 function submit!(executor::Threaded, entry::RunEntry, f)
     executor.in_flight += 1
     t = Threads.@spawn begin
-        # outcome resolved to exactly one value BEFORE the single put! below --
-        # not inside the same try/catch as the recording put! itself -- so a
-        # failure in put! (a real yield point under genuine thread contention)
-        # can never overwrite an already-computed, valid result with an
-        # unrelated exception. safe_call only ever lets InterruptException
-        # escape uncaught; caught here so a genuine interrupt still gets
-        # reported (as this trial's outcome) instead of silently killing the
-        # task and leaving in_flight stuck, deadlocking poll().
+        # Resolved BEFORE the single put! below, so a failure in put! itself can't overwrite a valid result.
         outcome = try
             safe_call(f, entry.params, entry.pre_artefact)
         catch e
@@ -80,10 +68,7 @@ function submit!(executor::Threaded, entry::RunEntry, f)
     return nothing
 end
 
-# Takes one result off executor's channel into out, unless it's an
-# InterruptException, which is stashed on executor.pending_exception instead
-# (see poll below for why). Shared by both call sites in poll so they can't
-# drift out of sync with each other.
+# Takes one result into out, unless it's an InterruptException (stashed on pending_exception instead).
 function _take_one!(executor::Threaded, out)
     entry, outcome = take!(executor.results)
     executor.in_flight -= 1
@@ -95,25 +80,12 @@ function _take_one!(executor::Threaded, out)
     return out
 end
 
-# Blocks for the first result only if one is actually in flight (per
-# AbstractExecutor's `poll` contract); drains any others already sitting in
-# the channel so run! doesn't call back in for results that are ready now.
+# Blocks for the first result only if something's in flight; drains any others already ready.
 function poll(executor::Threaded)
-    # A pending exception from a PREVIOUS call is thrown first, before
-    # anything else -- including before the in_flight==0 check below, since
-    # the exception can still be pending even after everything else has
-    # already been drained and told. Deferring the throw to the *next* call
-    # (rather than throwing as soon as it's found) is what lets this call's
-    # own already-collected `out` be returned normally instead of discarded:
-    # throwing mid-collection would unwind past `out` and lose every
-    # successfully-completed result gathered earlier in that same batch.
+    # Deferred to the NEXT call so this call's own already-collected `out` isn't discarded.
     executor.pending_exception !== nothing && throw(executor.pending_exception)
     executor.in_flight == 0 && return Tuple{RunEntry,Any}[]
-    # Explicitly typed -- a bare `Any[]` (or inferring from the first
-    # _take_one!() call) infers its element type from whichever concrete
-    # runtime type shows up first (e.g. an ObjectiveOutcome payload), and
-    # then errors on `push!` the moment a differently-typed payload (e.g. a
-    # caught ErrorException) shows up later in the same batch.
+    # Explicitly typed -- inferring from the first result can error if a later one has a different type.
     out = _take_one!(executor, Tuple{RunEntry,Any}[])
     while executor.in_flight > 0 && isready(executor.results)
         _take_one!(executor, out)

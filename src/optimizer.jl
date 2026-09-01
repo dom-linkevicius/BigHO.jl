@@ -1,21 +1,7 @@
 """
     OptimizerStatus
 
-A [`Hyperoptimizer`](@ref)'s lifecycle: `Initialized` (never run), `Running`
-(inside a `run!` call), `Finished` (a `run!` call ended naturally -- target
-reached or sampler exhausted -- and can still be resumed via `settarget!`
-then `run!` again), or `Errored` (a `run!` call was stopped by *any* exception
-escaping its own orchestration -- a genuine interrupt, a bug in a custom
-`Sampler`, anything -- as opposed to an exception from the objective itself,
-which `safe_call` already catches and records as an ordinary `Failed` trial
-without ever reaching this far). No attempt is made to distinguish *why* a
-run errored (interrupt vs. bug vs. anything else): the real exception is
-still thrown to the caller (nothing is swallowed), but `ho.status` itself
-just says `Errored` -- deliberately unspecific, since actually recovering
-from an aborted run is expected to go through checkpoint/reload rather than
-inspecting this `Hyperoptimizer` further. `Errored` is permanent: any trials
-still in flight at that moment are abandoned rather than recoverable, and
-`run!` refuses to run again.
+A [`Hyperoptimizer`](@ref)'s lifecycle: `Initialized`, `Running`, `Finished` (can be resumed via `settarget!`+`run!`), or `Errored` (any exception escaping `run!`'s orchestration, permanent -- in-flight trials abandoned, the real exception still rethrown to the caller).
 """
 @enum OptimizerStatus Initialized Running Errored Finished
 
@@ -36,11 +22,7 @@ end
 """
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
 
-Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref)
-per parameter name (e.g. `Continuous(1,5,0.1)`, `Nominal([true,false])`,
-`Ordinal([1,2,5,10])`); `objective` is called as `objective(params...)`
-unless wrapped in [`Stateful`](@ref). `n`, if given, bounds the total number
-of trials. Only ever minimizes -- to maximize, minimize `-objective(...)`.
+Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref) per parameter name; `objective` is called as `objective(params...)` unless wrapped in [`Stateful`](@ref). `n`, if given, bounds the total number of trials. Only ever minimizes.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
@@ -57,24 +39,13 @@ end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
-# Errored is permanent -- any trial still in flight at that moment was
-# already forcibly abandoned (see _abandon_pending!), so nothing (run!,
-# settarget!, or the manual ask!/tell! API) can meaningfully continue from
-# here. Shared so all four call sites describe it identically.
+# Errored is permanent -- in-flight trials already abandoned, nothing can resume from here.
 _is_terminal(ho::Hyperoptimizer) = ho.status == Errored
 
 """
     settarget!(ho, n)
 
-Raise the planned total number of trials to `n` -- how you resume a run:
-`settarget!(ho, n)` then `run!(ho)` again. Only raising is allowed; lowering
-throws `ArgumentError`. Also throws if `ho.sampler` fixes its plan to the
-sample count given at construction (e.g. a Latin Hypercube sampler) -- such
-a sampler can't respond to a new target at all -- or if `ho.status` is
-`Errored`, since that already abandoned any trials that were still in flight
-and `run!` will refuse to resume regardless. Warns if `ho` still has trials
-pending, since changing the target while trials are in flight isn't
-synchronized against them.
+Raise the planned total number of trials to `n` -- how you resume a run. Only raising is allowed; throws if lowering, if `ho.status` is `Errored`, or if the sampler has a fixed plan (e.g. Latin Hypercube). Warns if trials are still pending.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
     _is_terminal(ho) &&
@@ -93,11 +64,7 @@ end
 """
     ask!(ho) -> RunEntry
 
-Draw the next candidate from `ho.sampler` and register a `Pending`
-[`RunEntry`](@ref). Throws if `ho`'s sampler is exhausted, if `ho.n` has
-already been reached (call `settarget!` to raise it first), or if `ho.status`
-is `Errored` -- permanent, so this manual API can't be used to sneak new
-trials onto an optimizer `run!`/`settarget!` already refuse to touch.
+Draw the next candidate from `ho.sampler` and register a `Pending` [`RunEntry`](@ref). Throws if the sampler is exhausted, `ho.n` is already reached, or `ho.status` is `Errored`.
 """
 function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
@@ -116,8 +83,7 @@ function ask!(ho::Hyperoptimizer)
     end
 end
 
-# No NaN handling needed here: finalize_entry already excludes NaN outcomes
-# as Failed, so a Completed entry's value is never NaN by the time it's ranked.
+# finalize_entry already excludes NaN outcomes as Failed, so a Completed value is never NaN here.
 function update_best!(ho::Hyperoptimizer, entry::RunEntry)
     if ho.best_min_id === nothing || entry.value < ho.runs[ho.best_min_id].value
         ho.best_min_id = entry.id
@@ -128,13 +94,7 @@ end
 """
     tell!(ho, entry, outcome)
 
-Record `outcome` (the objective's return value, or a caught exception) for
-`entry`, classifying it via [`finalize_entry`](@ref) and updating the cached
-optimum. The sole mutation point for `ho.runs`/`ho.completed` outside of
-`_abandon_pending!`'s direct reclassification on error. Throws if `ho.status`
-is `Errored` -- already forcibly abandoned every still-Pending entry, so
-recording a fresh outcome here (e.g. for one of those very entries) would
-silently resurrect it and could double-count `ho.n_pending`.
+Record `outcome` for `entry`, classifying it via [`finalize_entry`](@ref) and updating the cached optimum. Throws if `ho.status` is `Errored`, since every still-`Pending` entry was already abandoned.
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
@@ -155,21 +115,7 @@ end
 """
     run!(ho; executor=Serial())
 
-Drive `ho` to completion (until `ho.n` trials have completed, the sampler is
-exhausted, or *any* exception escapes `run!`'s own orchestration -- a genuine
-interrupt, a bug in a custom `Sampler`, anything; an exception from the
-objective itself never reaches this far, since `safe_call` already catches
-and records it as an ordinary `Failed` trial), dispatching evaluations
-through `executor`. Whatever the exception was, it's rethrown to the caller
-unchanged and `ho.status` becomes `Errored` -- no attempt is made to
-distinguish an interrupt from a bug (see [`OptimizerStatus`](@ref)). To
-resume a finished run, call `settarget!(ho, n)` then `run!` again. Throws if
-`ho.status` is already `Errored`, since that already abandoned any trials
-that were still in flight -- construct a new `Hyperoptimizer` instead. Warns
-and returns without doing anything if `ho` already has nothing to do: its
-target already reached (call `settarget!` first), or its sampler exhausted
-(with a fixed plan, no further call could ever produce more trials for it;
-see [`FixedPlanSampler`](@ref)).
+Drive `ho` to completion, dispatching evaluations through `executor`. Any exception escaping `run!`'s own orchestration (not the objective, which `safe_call` already records as a `Failed` trial) is rethrown to the caller and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)). To resume a finished run, call `settarget!(ho, n)` then `run!` again. Throws if already `Errored`; warns and no-ops if there's nothing left to do.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
@@ -205,24 +151,14 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     catch e
         _handle_run_error(e, ho)
     finally
-        # Best-effort cleanup, not error reporting: whatever this raises is
-        # logged, never allowed to replace the real exception above (or to
-        # stop it from propagating) -- shutdown! runs inside its own try/catch
-        # specifically so it can't throw out of this finally block.
-        try
-            shutdown!(executor)
-        catch shutdown_e
-            @warn "shutdown! raised during cleanup" exception = shutdown_e
-        end
+        shutdown!(executor)
     end
     return ho
 end
 
-# Trials still in flight at the moment ho errors are abandoned, not
-# recoverable (their eventual outcome, if any, is never told) -- give them an
-# honest terminal status instead of leaving them looking indistinguishable
-# from "still in flight" forever.
-function _abandon_pending!(ho::Hyperoptimizer)
+# Any exception is treated identically: Errored, in-flight trials abandoned, rethrown unchanged.
+function _handle_run_error(e, ho::Hyperoptimizer)
+    ho.status = Errored
     lock(ho.lock) do
         for (i, entry) in enumerate(ho.runs)
             if entry.status === Pending
@@ -231,16 +167,5 @@ function _abandon_pending!(ho::Hyperoptimizer)
             end
         end
     end
-    return nothing
-end
-
-# ANY exception reaching this far (a genuine interrupt, a bug in a custom
-# Sampler, anything) is treated identically: ho.status becomes Errored, any
-# trial still in flight is abandoned, and the real exception is rethrown to
-# the caller unchanged -- see OptimizerStatus for why no attempt is made to
-# distinguish further.
-function _handle_run_error(e, ho::Hyperoptimizer)
-    ho.status = Errored
-    _abandon_pending!(ho)
     rethrow(e)
 end
