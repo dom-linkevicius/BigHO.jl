@@ -1,0 +1,40 @@
+name: Test
+on:
+  workflow_call:
+    inputs:
+      concern:
+        required: true
+        type: string
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        julia-version: ['1.11', '1']
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+    # GitHub-hosted runners have multiple CPUs -- JULIA_NUM_THREADS=auto lets
+    # Julia use them so the threaded concern actually exercises real
+    # multithreading. distributed also needs it: executors/equivalence.jl
+    # (the Serial/Threaded/DistributedQueue equivalence check) lives in that
+    # concern and includes a Threaded(8) leg, which otherwise never gets more
+    # than 1 thread. Every other concern is pinned to 1 thread explicitly,
+    # since re-verifying them under multiple threads is pointless.
+    env:
+      JULIA_NUM_THREADS: ${{ (inputs.concern == 'threaded' || inputs.concern == 'distributed') && 'auto' || '1' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: julia-actions/setup-julia@v2
+        with:
+          version: ${{ matrix.julia-version }}
+      - uses: julia-actions/julia-runtest@v1
+        with:
+          test_args: ${{ inputs.concern }}
+      - uses: julia-actions/julia-processcoverage@v1
+      - uses: codecov/codecov-action@v4
+        with:
+          file: ./lcov.info
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

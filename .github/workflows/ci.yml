@@ -1,39 +1,19 @@
 name: CI
 on: [push, pull_request]
 jobs:
+  # Each concern is a separate call to the reusable test.yml workflow (rather
+  # than one flat os/julia/concern matrix here) so the GitHub checks UI groups
+  # each concern's os/julia legs under its own collapsible entry, instead of
+  # listing all 30 combinations flat.
   test:
-    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        julia-version: ['1.11', '1']
-        os: [ubuntu-latest, windows-latest, macOS-latest]
         concern: [basic, samplers, serial, threaded, distributed]
-    # GitHub-hosted runners have multiple CPUs -- JULIA_NUM_THREADS=auto lets
-    # Julia use them so the threaded concern actually exercises real
-    # multithreading. distributed also needs it: executors/equivalence.jl
-    # (the Serial/Threaded/DistributedQueue equivalence check) lives in that
-    # concern and includes a Threaded(8) leg, which otherwise never gets more
-    # than 1 thread. Every other concern is pinned to 1 thread explicitly,
-    # since re-verifying them under multiple threads is pointless.
-    env:
-      JULIA_NUM_THREADS: ${{ (matrix.concern == 'threaded' || matrix.concern == 'distributed') && 'auto' || '1' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: julia-actions/setup-julia@v2
-        with:
-          version: ${{ matrix.julia-version }}
-      - uses: julia-actions/julia-runtest@v1
-        with:
-          test_args: ${{ matrix.concern }}
-      - uses: julia-actions/julia-processcoverage@v1
-      - uses: codecov/codecov-action@v4
-        with:
-          file: ./lcov.info
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+    uses: ./.github/workflows/test.yml
+    with:
+      concern: ${{ matrix.concern }}
+    secrets: inherit
 
   # A single stable check name for branch protection to require, regardless
   # of how the test matrix above grows or shrinks -- otherwise every matrix
