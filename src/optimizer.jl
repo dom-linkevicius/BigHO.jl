@@ -41,6 +41,9 @@ end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
+# Trials ever told an outcome, regardless of how many run! calls it took -- used for save_every's cadence.
+n_told(ho::Hyperoptimizer) = length(ho.runs) - ho.n_pending
+
 """
     settarget!(ho, n)
 
@@ -115,15 +118,26 @@ function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
 end
 
 """
-    run!(ho; executor=Serial())
+    run!(ho; executor=Serial(), save_every=nothing, save_path=nothing)
 
 Drive `ho` to completion, dispatching evaluations through `executor`.
 Any exception escaping `run!`'s own orchestration (not the objective) is rethrown and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)).
 To resume, call `settarget!(ho, n)` then `run!` again; throws if already `Errored`.
+
+`save_path`, if given, checkpoints `ho` there every `save_every` trials told, overwriting the same file (minus the objective -- see [`load_hyperoptimizer`](@ref)); a final checkpoint always runs when the run ends normally too, even if `save_every` was given.
+`save_every` requires `save_path`; `save_path` requires a real `ho.objective`. Writes are atomic (temp file renamed over `save_path`).
+Not saved if `run!` errors -- only the periodic `save_every` checkpoints, if any, capture an unfinished run.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
-function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
+function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
+              save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing)
+    save_every !== nothing && save_path === nothing &&
+        throw(ArgumentError("run!: save_every requires save_path"))
+    save_every !== nothing && save_every < 1 &&
+        throw(ArgumentError("run!: save_every must be >= 1, got $save_every"))
+    save_path !== nothing && ho.objective === nothing &&
+        throw(ArgumentError("run!: save_path requires a real ho.objective -- checkpointing substitutes `nothing` for it in the saved file (to be replaced with a fresh objective via load_hyperoptimizer), which would be ambiguous if it was already `nothing`"))
     ho.status == Errored &&
         throw(ArgumentError("run!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     if reached_target(ho)
@@ -140,6 +154,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     end
     ho.status = Running
     start!(executor, ho)
+    last_saved = n_told(ho)
     try
         while true
             while !_should_stop_asking(ho) && capacity(executor) > 0
@@ -149,9 +164,14 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
             for (entry, outcome) in poll(executor)
                 tell!(ho, entry, outcome)
             end
+            if save_every !== nothing && n_told(ho) - last_saved >= save_every
+                _save_checkpoint(ho, save_path)
+                last_saved = n_told(ho)
+            end
             _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
         ho.status = Finished
+        save_path !== nothing && _save_checkpoint(ho, save_path)
     catch e
         _handle_run_error(e, ho)
     finally
