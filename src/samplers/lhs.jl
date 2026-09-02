@@ -1,20 +1,24 @@
 """
-    LHSampler(; gens=nothing, gens_scale=10)
+    LHSampler(; gens=nothing)
 
 Draw all `ho.n` trials at once from an optimized Latin Hypercube design over `ho.candidates`.
 A `FixedPlanSampler`: can't be resumed via `settarget!` -- the design is optimized for one fixed trial count.
 Each `Domain` maps directly onto `LatinHypercubeSampling.jl`'s own dimension kinds (`Nominal`/`Ordinal` -> `Categorical`, `Continuous(min,max,dt)` -> `Continuous`), so no separate `dims=` argument is needed. `Continuous(values)` (arbitrary spacing) isn't supported.
 Construct via `Hyperoptimizer(objective, candidates, LHSampler(); n=...)`, which rebuilds `Continuous(min,max,dt)` domains to match `n` -- see that constructor's own docstring.
 `weights` on any domain isn't supported.
-`gens`, if given, overrides the number of LHC-optimization generations directly; otherwise it defaults to `gens_scale * n * ndims`.
+`gens`, if given, overrides the number of LHC-optimization generations directly; otherwise it defaults to `10` times the sum of each domain's own effective level count (`n` for `Continuous`, its actual level count for `Nominal`/`Ordinal`).
 """
 struct LHSampler <: Sampler
     gens::Union{Int,Nothing}
-    gens_scale::Int
     design::Matrix{Int} # ho.n × ndims, 1-based level indices into each domain's values; empty until init
 end
 
-LHSampler(; gens::Union{Int,Nothing}=nothing, gens_scale::Int=10) = LHSampler(gens, gens_scale, Matrix{Int}(undef, 0, 0))
+LHSampler(; gens::Union{Int,Nothing}=nothing) = LHSampler(gens, Matrix{Int}(undef, 0, 0))
+
+# A dimension's own contribution to the design's permutation search space -- a Continuous
+# column is a full n-permutation (n!), while a Categorical(levels) column's distinct
+# arrangements are a much smaller multinomial coefficient, closer to its own level count.
+_effective_levels(d::Domain, n::Int) = d.type === :continuous_linear ? n : length(d.values)
 
 function _lhc_dimension(d::Domain)
     d.weights === nothing || throw(ArgumentError("LHSampler doesn't support weighted domains"))
@@ -52,21 +56,22 @@ function init(s::LHSampler, ctx::AskContext)
     ctx.n < product &&
         @warn "LHSampler: n ($(ctx.n)) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
     dims = [_lhc_dimension(d) for d in ctx.candidates]
-    ndims = length(dims)
-    gens = something(s.gens, s.gens_scale * ctx.n * ndims)
+    gens = something(s.gens, 10 * sum(_effective_levels(d, ctx.n) for d in ctx.candidates))
     initial = LatinHypercubeSampling.randomLHC(ctx.n, dims)
     X, hist = LatinHypercubeSampling.LHCoptim!(initial, gens; dims)
     _warn_not_converged(s, hist)
     ctx.n >= product && _warn_missing_combinations(X, ctx.candidates)
-    return LHSampler(s.gens, s.gens_scale, X)
+    return LHSampler(s.gens, X)
 end
 
 # The best design found so late that more generations may well have kept improving it.
 function _warn_not_converged(s::LHSampler, hist)
     best_gen = findfirst(==(hist[end]), hist)
     if best_gen > 0.9 * length(hist)
-        suggestion = s.gens === nothing ? "gens_scale (currently $(s.gens_scale))" : "gens (currently $(s.gens))"
-        @warn "LHSampler: the optimization may not have converged (best design found in the last 10% of $(length(hist)) generations) -- consider increasing $suggestion"
+        suggestion = s.gens === nothing ?
+            "passing gens explicitly instead of the computed default ($(length(hist) - 1))" :
+            "increasing gens (currently $(s.gens))"
+        @warn "LHSampler: the optimization may not have converged (best design found in the last 10% of $(length(hist)) generations) -- consider $suggestion"
     end
     return nothing
 end
