@@ -53,8 +53,7 @@ function init(s::LHSampler, ctx::AskContext)
             throw(ArgumentError("LHSampler requires every Continuous domain to have exactly n ($(ctx.n)) values, got $(length(d.values))"))
     end
     product = _discrete_product(ctx.candidates)
-    ctx.n < product &&
-        @warn "LHSampler: n ($(ctx.n)) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
+    ctx.n < product && @warn "LHSampler: n ($(ctx.n)) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
     dims = [_lhc_dimension(d) for d in ctx.candidates]
     gens = something(s.gens, 10 * sum(_effective_levels(d, ctx.n) for d in ctx.candidates))
     initial = LatinHypercubeSampling.randomLHC(ctx.n, dims)
