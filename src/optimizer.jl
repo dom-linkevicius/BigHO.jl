@@ -118,7 +118,7 @@ function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
 end
 
 """
-    run!(ho; executor=Serial(), save_every=nothing, save_path=nothing)
+    run!(ho; executor=Serial(), save_every=nothing, save_path=nothing, show_progress=true)
 
 Drive `ho` to completion, dispatching evaluations through `executor`.
 Any exception escaping `run!`'s own orchestration (not the objective) is rethrown and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)).
@@ -127,17 +127,23 @@ To resume, call `settarget!(ho, n)` then `run!` again; throws if already `Errore
 `save_path`, if given, checkpoints `ho` there every `save_every` trials told, overwriting the same file (minus the objective -- see [`load_hyperoptimizer`](@ref)); a final checkpoint always runs when the run ends normally too, even if `save_every` was given.
 `save_every` requires `save_path`; `save_path` requires a real `ho.objective`. Writes are atomic (temp file renamed over `save_path`).
 Not saved if `run!` errors -- only the periodic `save_every` checkpoints, if any, capture an unfinished run.
+
+`show_progress` (on by default) shows a `ProgressMeter` bar tracking trials told against `ho.n`, which must be set for it (pass `show_progress=false` to run without a target).
+The bar always finishes, even on error, so a partially-drawn one is never left in the terminal.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
-              save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing)
+              save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing,
+              show_progress::Bool=true)
     save_every !== nothing && save_path === nothing &&
         throw(ArgumentError("run!: save_every requires save_path"))
     save_every !== nothing && save_every < 1 &&
         throw(ArgumentError("run!: save_every must be >= 1, got $save_every"))
     save_path !== nothing && ho.objective === nothing &&
         throw(ArgumentError("run!: save_path requires a real ho.objective -- checkpointing substitutes `nothing` for it in the saved file (to be replaced with a fresh objective via load_hyperoptimizer), which would be ambiguous if it was already `nothing`"))
+    show_progress && ho.n === nothing &&
+        throw(ArgumentError("run!: show_progress requires ho.n to be set"))
     ho.status == Errored &&
         throw(ArgumentError("run!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     if reached_target(ho)
@@ -155,6 +161,13 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
     ho.status = Running
     start!(executor, ho)
     last_saved = n_told(ho)
+    progress = nothing
+    if show_progress
+        progress = ProgressMeter.Progress(ho.n)
+        # force=true syncs the bar to a resumed run's real starting position (Progress's `start` kwarg doesn't actually seed it)...
+        # ...and ensures finish! below actually prints, which ProgressMeter otherwise skips if nothing was ever printed.
+        ProgressMeter.update!(progress, n_told(ho); force=true)
+    end
     try
         while true
             while !_should_stop_asking(ho) && capacity(executor) > 0
@@ -168,6 +181,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
                 _save_checkpoint(ho, save_path)
                 last_saved = n_told(ho)
             end
+            progress !== nothing && ProgressMeter.update!(progress, n_told(ho))
             _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
         ho.status = Finished
@@ -176,6 +190,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
         _handle_run_error(e, ho)
     finally
         shutdown!(executor)
+        progress !== nothing && ProgressMeter.finish!(progress)
     end
     return ho
 end
