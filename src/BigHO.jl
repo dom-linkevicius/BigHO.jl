@@ -18,23 +18,26 @@ import ProgressMeter
 import LatinHypercubeSampling
 
 include("domains.jl")
-include("samplers/sampler.jl")
 include("types.jl")
-include("executors/executor.jl")
-include("executors/serial.jl")
-include("executors/threaded.jl")
-include("executors/distributed_queue.jl")
-include("optimizer.jl")
+
+include("samplers/sampler.jl")
 include("samplers/random.jl")
 include("samplers/lhs.jl")
-include("report.jl")
-include("persistence.jl")
-
 """
     FixedPlanSampler
 
 Sampler types whose plan is fixed to `n` at construction (e.g. a Latin Hypercube design matrix), so `settarget!` can't work for them.
 """
 const FixedPlanSampler = Union{LHSampler}
+
+include("executors/executor.jl")
+include("executors/serial.jl")
+include("executors/threaded.jl")
+include("executors/distributed_queue.jl")
+
+include("optimizer.jl")
+
+include("report.jl")
+include("persistence.jl")
 
 end # module
