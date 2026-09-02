@@ -41,9 +41,6 @@ end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
-# Errored is permanent -- in-flight trials already abandoned, nothing can resume from here.
-_is_terminal(ho::Hyperoptimizer) = ho.status == Errored
-
 """
     settarget!(ho, n)
 
@@ -51,7 +48,7 @@ Raise the planned total number of trials to `n` -- how you resume a run.
 Throws if lowering, if `ho.status` is `Errored`, or the sampler has a fixed plan; warns if trials are still pending.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
-    _is_terminal(ho) &&
+    ho.status == Errored &&
         throw(ArgumentError("settarget!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     ho.n_pending > 0 &&
         @warn "settarget!: $(ho.n_pending) trial(s) still pending -- changing the target while trials are in flight may race with them"
@@ -72,7 +69,7 @@ Throws if the sampler is exhausted, `ho.n` is already reached, or `ho.status` is
 """
 function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
-        _is_terminal(ho) &&
+        ho.status == Errored &&
             throw(ArgumentError("ask!: this Hyperoptimizer already errored and cannot produce new trials -- construct a new Hyperoptimizer to continue"))
         exhausted(ho.sampler, ho) && throw(ArgumentError("Hyperoptimizer's sampler is exhausted: no more candidates available"))
         reached_target(ho) && throw(ArgumentError("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more"))
@@ -103,7 +100,7 @@ Throws if `ho.status` is `Errored` (every `Pending` entry was already abandoned)
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
-        _is_terminal(ho) &&
+        ho.status == Errored &&
             throw(ArgumentError("tell!: this Hyperoptimizer already errored and cannot record new outcomes -- construct a new Hyperoptimizer to continue"))
         told = finalize_entry(ho.runs[entry.id], outcome)
         ho.runs[told.id] = told
@@ -127,7 +124,7 @@ To resume, call `settarget!(ho, n)` then `run!` again; throws if already `Errore
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
-    _is_terminal(ho) &&
+    ho.status == Errored &&
         throw(ArgumentError("run!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     if reached_target(ho)
         @warn "run!: Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before calling run! again"
