@@ -38,7 +38,7 @@ end
 """
     DistributedQueue(max_concurrency=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout=30)
 
-`teardown_timeout` bounds (seconds) how long `submit!`'s `rmprocs` call waits for a worker to die.
+`teardown_timeout` bounds (seconds) how long a worker's `rmprocs` teardown waits, in both `submit!` and `shutdown!`.
 `0` means "fire-and-forget, unbounded" to `rmprocs`, not "don't wait" -- rejected; use `Inf` instead.
 """
 function DistributedQueue(max_concurrency::Int=Sys.CPU_THREADS; spawn_worker, setup_worker=Returns(nothing), teardown_timeout::Real=30)
@@ -56,21 +56,24 @@ end
 """
     shutdown!(executor::DistributedQueue)
 
-Shuts down NOW: kills any still-running trial's worker directly rather than waiting for it.
-See [`shutdown!(::Threaded)`](@ref) for why every task is still waited on afterward.
+Shuts down NOW: kills any still-running trial's worker directly rather than waiting for it, each bounded by `teardown_timeout` so one hung kill can't block the rest.
+Any kill failure is rethrown once every worker's been attempted, not swallowed. See [`shutdown!(::Threaded)`](@ref) for why every task is still waited on afterward.
 """
 function shutdown!(executor::DistributedQueue)
+    err = nothing
     for (pid, t) in executor.tasks
         if !istaskdone(t)
             try
-                Distributed.rmprocs(pid)
-            catch
+                Distributed.rmprocs(pid; waitfor=executor.teardown_timeout)
+            catch e
+                err === nothing && (err = e)
             end
         end
     end
     for (_, t) in executor.tasks
         wait(t)
     end
+    err === nothing || throw(err)
     return nothing
 end
 
@@ -80,6 +83,7 @@ function submit!(executor::DistributedQueue, entry::RunEntry, f)
     worker = try
         executor.spawn_worker()
     catch e
+        @warn "spawn_worker() failed" error = e
         e
     end
     if worker isa Exception
@@ -94,6 +98,7 @@ function submit!(executor::DistributedQueue, entry::RunEntry, f)
             future = Distributed.remotecall(safe_call, worker, f, entry.params, entry.pre_artefact)
             fetch(future)
         catch e
+            @warn "setup_worker() or objective errored" error = e
             e
         end
         put!(executor.results, (entry, outcome))

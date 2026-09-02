@@ -52,6 +52,7 @@ function submit!(executor::Threaded, entry::RunEntry, f)
         outcome = try
             safe_call(f, entry.params, entry.pre_artefact)
         catch e
+            @warn "objective interrupted" error = e
             e
         end
         put!(executor.results, (entry, outcome))
