@@ -3,12 +3,8 @@
 """
     RunEntry(id, params::NamedTuple, metadata=Dict{Symbol,Any}(); pre_artefact=nothing)
 
-The complete record of one trial: what was asked (`id`, `params`,
-`metadata`) and, once told, what happened (`status`, `value`,
-`post_artefact`). Immutable -- `tell!` replaces `ho.runs[id]` with a new
-`RunEntry` rather than mutating one in place. `value` is `missing` unless
-`status === Completed`. `pre_artefact`/`post_artefact` are `nothing` unless
-the objective is [`Stateful`](@ref).
+The complete record of one trial: what was asked (`id`, `params`, `metadata`) and, once told, what happened (`status`, `value`, `error`, `post_artefact`). Immutable -- `ho.runs[id]` is always replaced with a new `RunEntry`, never mutated in place.
+`value` is `missing` unless `status === Completed`; `error` holds the raw outcome that caused a `Failed` classification (an exception, `NaN`, etc.), `nothing` otherwise. `pre_artefact`/`post_artefact` are `nothing` unless the objective is [`Stateful`](@ref).
 """
 struct RunEntry{P<:NamedTuple}
     id::Int
@@ -16,34 +12,32 @@ struct RunEntry{P<:NamedTuple}
     metadata::Dict{Symbol,Any}
     status::RunStatus
     value::Any
+    error::Any
     pre_artefact::Any
     post_artefact::Any
 end
 function RunEntry(id::Int, params::NamedTuple, metadata::Dict{Symbol,Any}=Dict{Symbol,Any}(); pre_artefact=nothing)
-    return RunEntry(id, params, metadata, Pending, missing, pre_artefact, nothing)
+    return RunEntry(id, params, metadata, Pending, missing, nothing, pre_artefact, nothing)
 end
 
-_with_result(entry::RunEntry, status::RunStatus, value, post_artefact) =
-    RunEntry(entry.id, entry.params, entry.metadata, status, value, entry.pre_artefact, post_artefact)
+_with_result(entry::RunEntry, status::RunStatus, value, post_artefact; error=nothing) =
+    RunEntry(entry.id, entry.params, entry.metadata, status, value, error, entry.pre_artefact, post_artefact)
 
 """
     finalize_entry(entry::RunEntry, outcome) -> RunEntry
 
-Classify a raw objective outcome into a new `RunEntry`. Only a non-`NaN`
-`Real` becomes `Completed` -- `NaN`, `missing`, a thrown exception, or any
-other type all become `Failed` (with a `@warn` showing what was
-returned/thrown).
+Classify a raw objective outcome into a new `RunEntry`. Only a non-`NaN` `Real` becomes `Completed` -- `NaN`, `missing`, a thrown exception, or any other type all become `Failed`, with `.error` set to `outcome` (and a `@warn` at the time).
 """
 function finalize_entry(entry::RunEntry, outcome::Real)
     if isnan(outcome)
         @warn "Objective returned NaN; excluding this trial as failed" params = entry.params value = outcome
-        return _with_result(entry, Failed, missing, entry.post_artefact)
+        return _with_result(entry, Failed, missing, entry.post_artefact; error=outcome)
     end
     return _with_result(entry, Completed, outcome, entry.post_artefact)
 end
 function finalize_entry(entry::RunEntry, outcome)
     @warn "Objective returned a non-Real value; excluding this trial as failed" params = entry.params value = outcome
-    return _with_result(entry, Failed, missing, entry.post_artefact)
+    return _with_result(entry, Failed, missing, entry.post_artefact; error=outcome)
 end
 
 """
@@ -59,7 +53,7 @@ struct ObjectiveOutcome
 end
 function finalize_entry(entry::RunEntry, outcome::ObjectiveOutcome)
     told = finalize_entry(entry, outcome.value) # reuses whichever method matches value's type (Real -> NaN check, or the non-Real fallback)
-    return _with_result(told, told.status, told.value, outcome.post_artefact)
+    return _with_result(told, told.status, told.value, outcome.post_artefact; error=told.error)
 end
 
 """

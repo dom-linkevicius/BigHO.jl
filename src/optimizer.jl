@@ -1,3 +1,11 @@
+"""
+    OptimizerStatus
+
+A [`Hyperoptimizer`](@ref)'s lifecycle: `Initialized`, `Running`, `Finished` (resumable via `settarget!`+`run!`), or `Errored` (permanent).
+`Errored` covers any exception escaping `run!`'s orchestration -- in-flight trials abandoned, the exception rethrown to the caller.
+"""
+@enum OptimizerStatus Initialized Running Errored Finished
+
 mutable struct Hyperoptimizer{S<:Sampler,F}
     params::Vector{Symbol}
     candidates::Tuple
@@ -7,7 +15,7 @@ mutable struct Hyperoptimizer{S<:Sampler,F}
     runs::Vector{RunEntry}
     completed::Vector{Int}
     n_pending::Int
-    done::Bool
+    status::OptimizerStatus
     best_min_id::Union{Int,Nothing}
     lock::ReentrantLock
 end
@@ -15,11 +23,8 @@ end
 """
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
 
-Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref)
-per parameter name (e.g. `Continuous(1,5,0.1)`, `Nominal([true,false])`,
-`Ordinal([1,2,5,10])`); `objective` is called as `objective(params...)`
-unless wrapped in [`Stateful`](@ref). `n`, if given, bounds the total number
-of trials. Only ever minimizes -- to maximize, minimize `-objective(...)`.
+Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref) per parameter name; `n` bounds the total trials.
+`objective` is called as `objective(params...)`, unless wrapped in [`Stateful`](@ref); only ever minimizes.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
@@ -28,7 +33,7 @@ function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=Rand
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
     params = collect(Symbol, keys(candidates))
     ho = Hyperoptimizer(params, cands, sampler, objective, n,
-                         RunEntry[], Int[], 0, false,
+                         RunEntry[], Int[], 0, Initialized,
                          nothing, ReentrantLock())
     init!(sampler, AskContext(cands, 0, n))
     return ho
@@ -39,15 +44,12 @@ reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 """
     settarget!(ho, n)
 
-Raise the planned total number of trials to `n` -- how you resume a run:
-`settarget!(ho, n)` then `run!(ho)` again. Only raising is allowed; lowering
-throws `ArgumentError`. Also throws if `ho.sampler` fixes its plan to the
-sample count given at construction (e.g. a Latin Hypercube sampler) -- such
-a sampler can't respond to a new target at all. Warns if `ho` still has
-trials pending, since changing the target while trials are in flight isn't
-synchronized against them.
+Raise the planned total number of trials to `n` -- how you resume a run.
+Throws if lowering, if `ho.status` is `Errored`, or the sampler has a fixed plan; warns if trials are still pending.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
+    ho.status == Errored &&
+        throw(ArgumentError("settarget!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     ho.n_pending > 0 &&
         @warn "settarget!: $(ho.n_pending) trial(s) still pending -- changing the target while trials are in flight may race with them"
     ho.n !== nothing && n < ho.n &&
@@ -62,14 +64,15 @@ end
 """
     ask!(ho) -> RunEntry
 
-Draw the next candidate from `ho.sampler` and register a `Pending`
-[`RunEntry`](@ref). Throws if `ho`'s sampler is exhausted, or if `ho.n` has
-already been reached -- call `settarget!` to raise it first.
+Draw the next candidate from `ho.sampler` and register a `Pending` [`RunEntry`](@ref).
+Throws if the sampler is exhausted, `ho.n` is already reached, or `ho.status` is `Errored`.
 """
 function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
-        exhausted(ho.sampler, ho) && error("Hyperoptimizer's sampler is exhausted: no more candidates available")
-        reached_target(ho) && error("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more")
+        ho.status == Errored &&
+            throw(ArgumentError("ask!: this Hyperoptimizer already errored and cannot produce new trials -- construct a new Hyperoptimizer to continue"))
+        exhausted(ho.sampler, ho) && throw(ArgumentError("Hyperoptimizer's sampler is exhausted: no more candidates available"))
+        reached_target(ho) && throw(ArgumentError("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more"))
         ctx = AskContext(ho.candidates, length(ho.runs), ho.n)
         raw = ho.sampler(ctx)
         id = length(ho.runs) + 1
@@ -81,8 +84,7 @@ function ask!(ho::Hyperoptimizer)
     end
 end
 
-# No NaN handling needed here: finalize_entry already excludes NaN outcomes
-# as Failed, so a Completed entry's value is never NaN by the time it's ranked.
+# finalize_entry already excludes NaN outcomes as Failed, so a Completed value is never NaN here.
 function update_best!(ho::Hyperoptimizer, entry::RunEntry)
     if ho.best_min_id === nothing || entry.value < ho.runs[ho.best_min_id].value
         ho.best_min_id = entry.id
@@ -93,12 +95,13 @@ end
 """
     tell!(ho, entry, outcome)
 
-Record `outcome` (the objective's return value, or a caught exception) for
-`entry`, classifying it via [`finalize_entry`](@ref) and updating the cached
-optimum. The sole mutation point for `ho.runs`/`ho.completed`.
+Record `outcome` for `entry` via [`finalize_entry`](@ref), updating the cached optimum.
+Throws if `ho.status` is `Errored` (every `Pending` entry was already abandoned).
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
+        ho.status == Errored &&
+            throw(ArgumentError("tell!: this Hyperoptimizer already errored and cannot record new outcomes -- construct a new Hyperoptimizer to continue"))
         told = finalize_entry(ho.runs[entry.id], outcome)
         ho.runs[told.id] = told
         ho.n_pending -= 1
@@ -114,18 +117,28 @@ end
 """
     run!(ho; executor=Serial())
 
-Drive `ho` to completion (until `ho.n` trials have completed, the sampler is
-exhausted, or the run is interrupted), dispatching evaluations through
-`executor`. To resume a finished run, call `settarget!(ho, n)` then `run!`
-again. Warns instead of running if `ho.sampler` has a fixed plan (see
-[`FixedPlanSampler`](@ref)) and is already exhausted, since no further call
-to `run!` could ever produce more trials for it.
+Drive `ho` to completion, dispatching evaluations through `executor`.
+Any exception escaping `run!`'s own orchestration (not the objective) is rethrown and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)).
+To resume, call `settarget!(ho, n)` then `run!` again; throws if already `Errored`.
 """
-_should_stop_asking(ho::Hyperoptimizer) = ho.done || reached_target(ho) || exhausted(ho.sampler, ho)
+_should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
-    exhausted(ho.sampler, ho) && ho.sampler isa FixedPlanSampler &&
-        @warn "$(typeof(ho.sampler)) has a fixed plan and is already exhausted; run! won't produce any more trials -- change params or use a different sampler"
+    ho.status == Errored &&
+        throw(ArgumentError("run!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
+    if reached_target(ho)
+        @warn "run!: Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before calling run! again"
+        return ho
+    end
+    if exhausted(ho.sampler, ho)
+        if ho.sampler isa FixedPlanSampler
+            @warn "$(typeof(ho.sampler)) has a fixed plan and is already exhausted; run! won't produce any more trials -- change params or use a different sampler"
+        else
+            @warn "run!: $(typeof(ho.sampler)) is exhausted; run! won't produce any more trials"
+        end
+        return ho
+    end
+    ho.status = Running
     start!(executor, ho)
     try
         while true
@@ -138,6 +151,7 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
             end
             _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
+        ho.status = Finished
     catch e
         _handle_run_error(e, ho)
     finally
@@ -146,8 +160,16 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial())
     return ho
 end
 
-_handle_run_error(e, ho::Hyperoptimizer) = rethrow(e)
-function _handle_run_error(::InterruptException, ho::Hyperoptimizer)
-    ho.done = true
-    @info "Aborting hyperoptimization, returning partial results"
+# Any exception is treated identically: Errored, in-flight trials abandoned, rethrown unchanged.
+function _handle_run_error(e, ho::Hyperoptimizer)
+    ho.status = Errored
+    lock(ho.lock) do
+        for (i, entry) in enumerate(ho.runs)
+            if entry.status === Pending
+                ho.runs[i] = _with_result(entry, Abandoned, missing, entry.post_artefact)
+                ho.n_pending -= 1
+            end
+        end
+    end
+    rethrow(e)
 end
