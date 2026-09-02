@@ -34,3 +34,19 @@ jobs:
           name: codecov-umbrella
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  # A single stable check name for branch protection to require, regardless
+  # of how the test matrix above grows or shrinks -- otherwise every matrix
+  # change (a new Julia version, OS, or concern) would also require updating
+  # the required-checks list on master, and forgetting to remove a dropped
+  # leg there leaves it permanently "pending", blocking every future merge.
+  ci-success:
+    needs: test
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if [[ "${{ contains(needs.test.result, 'failure') || contains(needs.test.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more matrix jobs failed"
+            exit 1
+          fi

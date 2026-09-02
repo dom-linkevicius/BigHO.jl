@@ -1,3 +1,17 @@
+# Throws on its 3rd call, to exercise an exception from ask! rather than the objective.
+mutable struct BuggySampler <: BigHO.Sampler
+    n_calls::Int
+end
+BuggySampler() = BuggySampler(0)
+function (s::BuggySampler)(ctx)
+    s.n_calls += 1
+    s.n_calls == 3 && error("sampler bug")
+    return [s.n_calls]
+end
+BigHO.init!(::BuggySampler, ctx) = nothing
+BigHO.exhausted(::BuggySampler, ho) = false
+BigHO.on_tell!(::BuggySampler, entry) = nothing
+
 @testset "Threaded executor" begin
     @info "Testing Threaded executor"
 
@@ -14,12 +28,7 @@
     entry2 = BigHO.RunEntry(2, (a=2,))
     BigHO.submit!(ex, entry2, a -> a)
     @test BigHO.capacity(ex) == 0
-    # poll blocks for the first result but isn't guaranteed to drain both in
-    # one call (the second trivial task may not have finished yet under
-    # system load) -- call again rather than assume a single call suffices,
-    # matching how run! itself actually consumes poll() (in a loop). A second
-    # call is always safe: once in_flight hits 0 it returns empty immediately
-    # rather than blocking.
+    # poll isn't guaranteed to drain both in one call -- call again, like run! does in a loop.
     out = BigHO.poll(ex)
     append!(out, BigHO.poll(ex))
     @test length(out) == 2
@@ -27,13 +36,7 @@
     @test Set(e.id for (e, _) in out) == Set([1, 2])
     BigHO.shutdown!(ex)
 
-    # Regression: poll() must not discard already-collected results from
-    # earlier in the same batch just because a later item in that batch is an
-    # interrupt -- it defers the throw to the NEXT call instead, so
-    # already-completed trials are never silently lost. Seeded directly
-    # (rather than via run!) since real concurrency timing can't
-    # deterministically force multiple results and an interrupt into the same
-    # poll() batch.
+    # Regression: poll() must not discard earlier good results just because a later item is an interrupt.
     ex_batch = Threaded(4)
     BigHO.start!(ex_batch, nothing)
     entryA = BigHO.RunEntry(1, (a=1,))
@@ -49,12 +52,7 @@
     @test_throws InterruptException BigHO.poll(ex_batch) # deferred throw happens on the NEXT call
     BigHO.shutdown!(ex_batch)
 
-    # Regression: shutdown! must actually wait for outstanding tasks to
-    # finish, not just stop tracking them -- otherwise a trial still running
-    # when the run ends keeps executing invisibly in the background after the
-    # caller already got control back. Tested at the executor level directly
-    # (rather than via run!) for a deterministic outcome regardless of
-    # RandomSampler's draw order.
+    # Regression: shutdown! must wait for outstanding tasks, not just stop tracking them.
     ex_shutdown = Threaded(4)
     BigHO.start!(ex_shutdown, nothing)
     finished = Ref(false)
@@ -62,45 +60,26 @@
     BigHO.shutdown!(ex_shutdown)
     @test finished[]
 
-    # Regression: shutdown! must let a genuine InterruptException propagate
-    # (e.g. a second Ctrl+C while already waiting out a task that's still
-    # running) rather than silently swallowing it -- only non-interrupt
-    # exceptions are this function's business to absorb. wait() on a failed
-    # task wraps the real exception in a TaskFailedException, so check
-    # .task.result for the actual InterruptException underneath.
-    ex_shutdown_interrupt = Threaded(1)
-    BigHO.start!(ex_shutdown_interrupt, nothing)
-    BigHO.submit!(ex_shutdown_interrupt, BigHO.RunEntry(1, (a=1,)), _ -> (sleep(2.0); 1))
-    shutdown_task = @async BigHO.shutdown!(ex_shutdown_interrupt)
-    sleep(0.2)
-    schedule(shutdown_task, InterruptException(); error=true)
-    caught = nothing
+    # shutdown! doesn't swallow a failed task's exception -- wait() raises it, same as any other error.
+    failed_task = @async throw(InterruptException())
     try
-        wait(shutdown_task)
-    catch e
-        caught = e
+        wait(failed_task)
+    catch
     end
-    @test caught isa TaskFailedException
-    @test caught.task.result isa InterruptException
+    @test istaskfailed(failed_task)
+    ex_task_failure = Threaded(1)
+    BigHO.start!(ex_task_failure, nothing)
+    push!(ex_task_failure.tasks, failed_task)
+    @test_throws TaskFailedException BigHO.shutdown!(ex_task_failure)
 
-    # Every trial gets told exactly once, with the outcome correctly
-    # attributed to its own entry, regardless of completion order under real
-    # concurrency -- the thing that's actually at risk in a threaded executor
-    # (lost/duplicated/misattributed results), rather than in the ask!/tell!
-    # core itself, which is executor-agnostic. (RandomSampler draws with
-    # replacement, so n=500 over 500 candidates does NOT guarantee every
-    # candidate gets visited -- that's not what's being tested here.)
+    # Every trial told exactly once, correctly attributed, regardless of completion order under real concurrency.
     ho = Hyperoptimizer(a -> a^2, (a=Continuous(1, 500, 1),); n=500)
     run!(ho; executor=Threaded(8))
     @test length(ho.runs) == 500
     @test all(e -> e.status == BigHO.Completed, ho.runs) # none lost/left Pending
     @test all(e -> e.value == e.params.a^2, ho.runs) # each outcome attributed to the right entry
 
-    # Failure handling goes through the same safe_call/finalize_entry pipeline
-    # regardless of executor -- an exception thrown inside a spawned task is
-    # still caught and recorded as Failed, not left to crash the run. The
-    # executor is constructed outside @test_logs so its own "single thread"
-    # warning (unrelated to this test) isn't part of the expected log sequence.
+    # An exception thrown inside a spawned task is caught and recorded as Failed, not left to crash the run.
     ho_err = Hyperoptimizer(a -> a == 2 ? error("boom") : a, (a=Nominal([1, 2, 3]),); n=3)
     ex_err = Threaded(3)
     @test_logs (:warn, r"non-Real") run!(ho_err; executor=ex_err)
@@ -108,44 +87,49 @@
     @test length(ho_err.runs) == 3
     @test count(e -> e.status == BigHO.Failed, ho_err.runs) == 1
 
-    # Graceful interrupt under real concurrency: an InterruptException thrown
-    # inside a spawned task must not deadlock poll() waiting forever for a
-    # result that task can now never produce -- run! stops gracefully
-    # (ho.status = Interrupted) with valid partial results, same contract as
-    # Serial, and the interrupted trial itself is abandoned rather than left
-    # permanently Pending. max_concurrency=1 keeps this deterministic (one
-    # trial in flight at a time, so the second call is unambiguously the one
-    # that interrupts).
+    # An interrupt inside a spawned task must not deadlock poll() -- run! rethrows it with valid partial results.
     let n_calls = Ref(0)
         global interrupt_after_first_threaded(a) = (n_calls[] += 1; n_calls[] == 1 ? a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first_threaded, (a=Nominal([1, 2, 3]),); n=3)
-    @test_logs (:info, r"Aborting") run!(ho_interrupt; executor=Threaded(1))
-    @test ho_interrupt.status == BigHO.Interrupted
+    @test_throws InterruptException run!(ho_interrupt; executor=Threaded(1))
+    @test ho_interrupt.status == BigHO.Errored
     @test length(results(ho_interrupt)) == 1  # the trial before the interrupt completed normally
     @test ho_interrupt.n_pending == 0
     @test ho_interrupt.runs[2].status == BigHO.Abandoned # the interrupted trial itself
-    @test_throws ArgumentError run!(ho_interrupt) # an Interrupted optimizer can never be resumed
+    @test_throws ArgumentError run!(ho_interrupt) # an Errored optimizer can never be resumed
 
-    # Correctness: enough trials relative to the grid size (~500x oversampling
-    # per candidate) to find the true optimum with overwhelming probability
-    # regardless of RNG state, without depending on exact draw-position luck.
+    # Regression: a bug in the Sampler's ask! call must propagate like an interrupt, abandoning any trial still in flight.
+    ho_errored = Hyperoptimizer(a -> a == 1 ? 1.0 : (sleep(2.0); 2.0), (a=Nominal([1, 2, 3]),);
+                                 sampler=BuggySampler(), n=3)
+    # Checks the message, not just the type -- a prior bug raised the wrong ErrorException here.
+    run_errored_exception = nothing
+    try
+        run!(ho_errored; executor=Threaded(2))
+    catch e
+        run_errored_exception = e
+    end
+    @test run_errored_exception isa ErrorException
+    @test run_errored_exception.msg == "sampler bug"
+    @test ho_errored.status == BigHO.Errored
+    @test ho_errored.n_pending == 0
+    @test length(ho_errored.runs) == 2 # the 3rd draw's entry is never created; ask! throws before that
+    @test count(e -> e.status == BigHO.Completed, ho_errored.runs) == 1 # the fast trial
+    @test count(e -> e.status == BigHO.Abandoned, ho_errored.runs) == 1 # the still-sleeping sibling
+    @test_throws ArgumentError run!(ho_errored) # an Errored optimizer can never be resumed either
+    @test_throws ArgumentError settarget!(ho_errored, 10)
+    @test_throws ArgumentError BigHO.ask!(ho_errored) # nor can the manual ask!/tell! API sneak past this
+    @test_throws ArgumentError BigHO.tell!(ho_errored, ho_errored.runs[2], 42) # even for its own abandoned entry
+
+    # Correctness: enough oversampling to find the true optimum regardless of RNG state.
     g(a, b) = (a - 7)^2 + (b - 3)^2
     ho_exact = Hyperoptimizer(g, (a=Ordinal(0:10), b=Ordinal(0:10)); n=6000)
     run!(ho_exact; executor=Threaded(8))
     @test minimum(ho_exact) == 0
     @test minimizer(ho_exact) == [7, 3]
 
-    # Concurrency actually happens: trials with a real (I/O-bound) delay
-    # complete well under their combined serial duration when run through
-    # Threaded, since each is spawned as its own task rather than awaited one
-    # at a time -- true even on a single OS thread, since `sleep`
-    # cooperatively yields. That cooperative-yielding behavior means the
-    # timing check below would still pass under a single thread without ever
-    # having exercised real Base.Threads parallelism -- the actual point of
-    # this phase (see the plan). Assert the thread count directly so that
-    # case fails loudly instead of this concern silently "passing" without
-    # having proven anything about true parallelism.
+    # Concurrency actually happens: delayed trials finish well under serial time.
+    # Thread count asserted directly, since sleep's cooperative yielding could pass this on 1 thread too.
     @test Threads.nthreads() > 1
     n_slow, delay = 8, 0.2
     ho_slow = Hyperoptimizer(_ -> (sleep(delay); 1.0), (a=Nominal(1:n_slow),); n=n_slow)

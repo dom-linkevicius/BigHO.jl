@@ -16,6 +16,8 @@
     @test !any(isnan, results(ho_nan))
     @test ho_nan.runs[2].status == BigHO.Failed
     @test ho_nan.runs[2].value === missing
+    @test isnan(ho_nan.runs[2].error) # the raw NaN outcome is preserved on .error, not just logged
+    @test ho_nan.runs[1].error === nothing # Completed entries carry no error
 
     # A thrown exception behaves the same way: Failed, warns showing what was
     # thrown, excluded from history/results.
@@ -30,6 +32,8 @@
     @test length(results(ho_err)) == 1
     @test ho_err.runs[2].status == BigHO.Failed
     @test ho_err.runs[2].value === missing
+    @test ho_err.runs[2].error isa ErrorException && ho_err.runs[2].error.msg == "boom" # the raw exception is preserved on .error
+    @test ho_err.runs[1].error === nothing # Completed entries carry no error
 
     # A run where every trial fails has no completed trial at all -- the
     # optimum accessors throw rather than returning a sentinel.

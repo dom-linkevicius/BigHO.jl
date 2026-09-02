@@ -29,5 +29,5 @@
     ho3 = Hyperoptimizer(nothing, (a=Nominal([1, 2, 3]),); n=2)
     BigHO.ask!(ho3)
     BigHO.ask!(ho3)
-    @test_throws ErrorException BigHO.ask!(ho3)
+    @test_throws ArgumentError BigHO.ask!(ho3)
 end
