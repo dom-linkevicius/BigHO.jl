@@ -34,11 +34,10 @@ function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=Rand
     all(d -> d isa Domain, cands) ||
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
     params = collect(Symbol, keys(candidates))
-    ho = Hyperoptimizer(params, cands, sampler, objective, n,
-                         RunEntry[], Int[], 0, Initialized,
-                         nothing, ReentrantLock())
-    init!(sampler, AskContext(cands, 0, n))
-    return ho
+    initialized_sampler = init(sampler, AskContext(cands, 0, n))
+    return Hyperoptimizer(params, cands, initialized_sampler, objective, n,
+                           RunEntry[], Int[], 0, Initialized,
+                           nothing, ReentrantLock())
 end
 
 """

@@ -7,10 +7,12 @@
     # no override warning expected here (see the dedicated test for that below).
     # Continuous(min,max,dt) is used throughout this file, not Continuous(values) --
     # LHSampler rejects the latter (arbitrary spacing), see the dedicated test below.
+    # Ordinal stays a small, realistic level count -- not a near-continuous sweep,
+    # which is what Continuous is for (and LHSampler already exercises separately).
     ho = Hyperoptimizer((a, b, c) -> f(a, b, c=c),
                          (a=Continuous(1, 5, 4 / 99),
                           b=Nominal([true, false]),
-                          c=Ordinal(exp10.(LinRange(-1, 3, 100)))),
+                          c=Ordinal([1, 10, 100, 1000])),
                          LHSampler(); n=100)
     run!(ho)
     @test minimum(ho) < 300

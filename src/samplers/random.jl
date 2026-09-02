@@ -14,5 +14,5 @@ function (s::RandomSampler)(ctx::AskContext)
 end
 
 on_tell!(::RandomSampler, entry) = nothing
-init!(::RandomSampler, ctx) = nothing
+init(s::RandomSampler, ctx) = s
 exhausted(::RandomSampler, ho) = false

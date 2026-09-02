@@ -7,7 +7,7 @@ function (s::SequentialSampler)(ctx)
     s.n_calls += 1
     return [s.n_calls]
 end
-BigHO.init!(::SequentialSampler, ctx) = nothing
+BigHO.init(s::SequentialSampler, ctx) = s
 BigHO.exhausted(::SequentialSampler, ho) = false
 BigHO.on_tell!(::SequentialSampler, entry) = nothing
 

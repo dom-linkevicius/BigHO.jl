@@ -1,19 +1,20 @@
 """
-    LHSampler(; gens=nothing)
+    LHSampler(; gens=nothing, gens_scale=10)
 
 Draw all `ho.n` trials at once from an optimized Latin Hypercube design over `ho.candidates`.
 A `FixedPlanSampler`: can't be resumed via `settarget!` -- the design is optimized for one fixed trial count.
 Each `Domain` maps directly onto `LatinHypercubeSampling.jl`'s own dimension kinds (`Nominal`/`Ordinal` -> `Categorical`, `Continuous(min,max,dt)` -> `Continuous`), so no separate `dims=` argument is needed. `Continuous(values)` (arbitrary spacing) isn't supported.
 Construct via `Hyperoptimizer(objective, candidates, LHSampler(); n=...)`, which rebuilds `Continuous(min,max,dt)` domains to match `n` -- see that constructor's own docstring.
 `weights` on any domain isn't supported.
-`gens`, if given, overrides the number of LHC-optimization generations (default: a size-scaled heuristic).
+`gens`, if given, overrides the number of LHC-optimization generations directly; otherwise it defaults to `gens_scale * n * ndims`.
 """
-mutable struct LHSampler <: Sampler
+struct LHSampler <: Sampler
     gens::Union{Int,Nothing}
-    design::Matrix{Int} # ho.n × ndims, 1-based level indices into each domain's values; empty until init!
+    gens_scale::Int
+    design::Matrix{Int} # ho.n × ndims, 1-based level indices into each domain's values; empty until init
 end
 
-LHSampler(; gens::Union{Int,Nothing}=nothing) = LHSampler(gens, Matrix{Int}(undef, 0, 0))
+LHSampler(; gens::Union{Int,Nothing}=nothing, gens_scale::Int=10) = LHSampler(gens, gens_scale, Matrix{Int}(undef, 0, 0))
 
 function _lhc_dimension(d::Domain)
     d.weights === nothing || throw(ArgumentError("LHSampler doesn't support weighted domains"))
@@ -21,7 +22,7 @@ function _lhc_dimension(d::Domain)
 end
 
 # Only a :continuous_linear domain gets rebuilt (it has a well-defined range to rebuild over);
-# :continuous_arbitrary is left as-is here and rejected below in init!'s validation instead.
+# :continuous_arbitrary is left as-is here and rejected below in init's validation instead.
 function _linearize_for_lhs(candidates::NamedTuple, n::Int)
     names = keys(candidates)
     vals = map(names, values(candidates)) do name, d
@@ -40,7 +41,7 @@ end
 
 _discrete_product(candidates) = prod((length(d.values) for d in candidates if d.type in (:nominal, :ordinal)); init=1)
 
-function init!(s::LHSampler, ctx::AskContext)
+function init(s::LHSampler, ctx::AskContext)
     for d in ctx.candidates
         d.type !== :continuous_arbitrary ||
             throw(ArgumentError("LHSampler doesn't support Continuous(values) domains (arbitrary spacing) -- use Continuous(min, max, dt), or apply the nonlinear transform inside the objective itself"))
@@ -52,11 +53,21 @@ function init!(s::LHSampler, ctx::AskContext)
         @warn "LHSampler: n ($(ctx.n)) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
     dims = [_lhc_dimension(d) for d in ctx.candidates]
     ndims = length(dims)
-    gens = something(s.gens, max(1, (1000 * 100 * 2) ÷ ctx.n ÷ ndims))
+    gens = something(s.gens, s.gens_scale * ctx.n * ndims)
     initial = LatinHypercubeSampling.randomLHC(ctx.n, dims)
-    X, _ = LatinHypercubeSampling.LHCoptim!(initial, gens; dims)
-    s.design = X
+    X, hist = LatinHypercubeSampling.LHCoptim!(initial, gens; dims)
+    _warn_not_converged(s, hist)
     ctx.n >= product && _warn_missing_combinations(X, ctx.candidates)
+    return LHSampler(s.gens, s.gens_scale, X)
+end
+
+# The best design found so late that more generations may well have kept improving it.
+function _warn_not_converged(s::LHSampler, hist)
+    best_gen = findfirst(==(hist[end]), hist)
+    if best_gen > 0.9 * length(hist)
+        suggestion = s.gens === nothing ? "gens_scale (currently $(s.gens_scale))" : "gens (currently $(s.gens))"
+        @warn "LHSampler: the optimization may not have converged (best design found in the last 10% of $(length(hist)) generations) -- consider increasing $suggestion"
+    end
     return nothing
 end
 
