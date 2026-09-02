@@ -4,6 +4,7 @@ version = "0.5.6"
 author = ["Domas Linkevicius"]
 
 [deps]
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
 Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
@@ -25,6 +26,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 ThreadPools = "b189fb0b-2eb5-4ed4-bc0c-d34c51242431"
 
 [compat]
+DataFrames = "1.8.2"
 Distributions = "0.24, 0.25"
 JLD2 = "0.6.6"
 LatinHypercubeSampling = "1.2"

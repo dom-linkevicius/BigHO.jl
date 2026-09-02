@@ -15,6 +15,7 @@ using StableRNGs: StableRNG
 using StatsBase: Weights, sample
 import JLD2
 import ProgressMeter
+import DataFrames
 
 include("domains.jl")
 include("samplers/sampler.jl")
@@ -27,5 +28,6 @@ include("optimizer.jl")
 include("samplers/random.jl")
 include("report.jl")
 include("persistence.jl")
+include("dataframe.jl")
 
 end # module
