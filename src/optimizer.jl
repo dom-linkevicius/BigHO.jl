@@ -41,9 +41,7 @@ end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
-# Trials ever told an outcome (Completed/Failed/Abandoned), regardless of
-# how many separate run! calls it took to get there -- used to decide when
-# save_every worth of new trials have accumulated since the last checkpoint.
+# Trials ever told an outcome, regardless of how many run! calls it took -- used for save_every's cadence.
 n_told(ho::Hyperoptimizer) = length(ho.runs) - ho.n_pending
 
 """
@@ -126,21 +124,9 @@ Drive `ho` to completion, dispatching evaluations through `executor`.
 Any exception escaping `run!`'s own orchestration (not the objective) is rethrown and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)).
 To resume, call `settarget!(ho, n)` then `run!` again; throws if already `Errored`.
 
-`save_path`, if given, checkpoints `ho` there (minus its objective -- see
-[`load_hyperoptimizer`](@ref)) every `save_every` trials told (any outcome,
-not just `Completed`), overwriting the same file each time. Omit
-`save_every` to only save once, when the run ends naturally (target
-reached or sampler exhausted) -- and even when `save_every` is given, one
-last checkpoint is always taken at that point too, so the file on disk
-always reflects the true end state rather than being stuck at the last
-`save_every` boundary before it. `save_every` without `save_path` is an
-error, and so is `save_path` on a `ho` whose `objective` is already
-`nothing` (checkpointing substitutes `nothing` for the objective in the
-saved file, so a real one is required to make that substitution meaningful).
-Each write is atomic (a temp file renamed over `save_path`), so a crash
-mid-write can't corrupt the last good checkpoint. Note this final save does
-not happen if `run!` errors (`ho.status = Errored`) -- only the periodic
-`save_every` checkpoints, if any, capture a run that didn't finish normally.
+`save_path`, if given, checkpoints `ho` there every `save_every` trials told, overwriting the same file (minus the objective -- see [`load_hyperoptimizer`](@ref)); a final checkpoint always runs when the run ends normally too, even if `save_every` was given.
+`save_every` requires `save_path`; `save_path` requires a real `ho.objective`. Writes are atomic (temp file renamed over `save_path`).
+Not saved if `run!` errors -- only the periodic `save_every` checkpoints, if any, capture an unfinished run.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
 
