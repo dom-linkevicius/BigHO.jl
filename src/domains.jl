@@ -2,10 +2,12 @@
     Domain
 
 A hyperparameter's kind and candidate values -- nominal, ordinal, or
-continuous. `type` (`:nominal`/`:ordinal`/`:continuous`) tags the kind,
-`values` holds the sorted candidates, `weights` is an optional per-candidate
-sampling weight. Construct via [`Nominal`](@ref)/[`Ordinal`](@ref)/
-[`Continuous`](@ref) rather than this struct directly.
+continuous. `type` (`:nominal`/`:ordinal`/`:continuous_linear`/`:continuous_arbitrary`)
+tags the kind (continuous is split by whether `values` is a known-linear grid
+or an arbitrary sequence -- see [`Continuous`](@ref)), `values` holds the
+sorted candidates, `weights` is an optional per-candidate sampling weight.
+Construct via [`Nominal`](@ref)/[`Ordinal`](@ref)/[`Continuous`](@ref) rather
+than this struct directly.
 """
 struct Domain
     type::Symbol
@@ -13,8 +15,8 @@ struct Domain
     weights::Union{Vector{Float64},Nothing}
 
     function Domain(type::Symbol, values::AbstractVector, weights::Union{Vector{Float64},Nothing})
-        type in (:nominal, :ordinal, :continuous) ||
-            throw(ArgumentError("type must be :nominal, :ordinal, or :continuous, got $(repr(type))"))
+        type in (:nominal, :ordinal, :continuous_linear, :continuous_arbitrary) ||
+            throw(ArgumentError("type must be :nominal, :ordinal, :continuous_linear, or :continuous_arbitrary, got $(repr(type))"))
         isempty(values) && throw(ArgumentError("values must be non-empty"))
         weights === nothing || length(weights) == length(values) ||
             throw(ArgumentError("weights must have length $(length(values)) (one per level), got $(length(weights))"))
@@ -100,21 +102,26 @@ _check_order(values::AbstractVector) =
 
 A continuous real-valued dimension. The `(min, max, dt)` form is a grid
 from `min` to `max` spaced `dt` apart (`dt` is the point spacing, not a
-count; the last point falls short of `max` if it doesn't divide evenly).
+count; the last point falls short of `max` if it doesn't divide evenly) --
+tagged `:continuous_linear`, since it's known to be evenly spaced.
 The `values` form takes an explicit, strictly increasing sequence instead
-(e.g. a log-spaced range like `exp10.(LinRange(-1, 3, 50))`) -- unlike the
-`(min, max, dt)` form, `values` need not be evenly spaced. `weights`, if
-given, biases `rand` away from uniform.
+(e.g. a log-spaced range like `exp10.(LinRange(-1, 3, 50))`), not
+necessarily evenly spaced -- tagged `:continuous_arbitrary`; some samplers
+(e.g. [`LHSampler`](@ref)) that assume linear spacing reject this form.
+`weights`, if given, biases `rand` away from uniform.
 """
 function Continuous(min::Real, max::Real, dt::Real; weights::Union{Vector{Float64},Nothing}=nothing)
     min, max, dt = Float64(min), Float64(max), Float64(dt)
     max >= min || throw(ArgumentError("max ($max) must be >= min ($min)"))
     dt > 0 || throw(ArgumentError("dt must be > 0, got $dt"))
-    return Continuous(min:dt:max; weights)
+    return _continuous_domain(:continuous_linear, min:dt:max, weights)
 end
 function Continuous(values::AbstractVector{<:Real}; weights::Union{Vector{Float64},Nothing}=nothing)
     issorted(values) && allunique(values) ||
         throw(ArgumentError("Continuous(values) requires strictly increasing values (no duplicates); got $values"))
+    return _continuous_domain(:continuous_arbitrary, values, weights)
+end
+function _continuous_domain(type::Symbol, values::AbstractVector{<:Real}, weights)
     length(values) < 5 && @warn "Continuous domain has fewer than 5 candidate values; consider using Ordinal instead"
-    return Domain(:continuous, Float64.(values), weights)
+    return Domain(type, Float64.(values), weights)
 end
