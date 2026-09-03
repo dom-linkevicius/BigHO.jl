@@ -6,14 +6,16 @@ A `FixedPlanSampler`: can't be resumed via `settarget!` -- the design is optimiz
 Each `Domain` maps directly onto `LatinHypercubeSampling.jl`'s own dimension kinds (`Nominal`/`Ordinal` -> `Categorical`, `Continuous(min,max,dt)` -> `Continuous`), so no separate `dims=` argument is needed. `Continuous(values)` (arbitrary spacing) isn't supported.
 Construct via `Hyperoptimizer(objective, candidates, LHSampler(); n=...)`, which rebuilds `Continuous(min,max,dt)` domains to match `n` -- see that constructor's own docstring.
 `weights` on any domain isn't supported.
-`gens`, if given, overrides the number of LHC-optimization generations directly; otherwise it defaults to `10` times the sum of each domain's own effective level count (`n` for `Continuous`, its actual level count for `Nominal`/`Ordinal`).
+`gens`, if given, overrides the number of LHC-optimization generations directly; otherwise it defaults to `10` times the product of each domain's own effective level count (`n` for `Continuous`, its actual level count for `Nominal`/`Ordinal`).
+Its optimization history is inspectable via [`get_lhs_optim_history`](@ref).
 """
 struct LHSampler <: Sampler
     gens::Union{Int,Nothing}
     design::Matrix{Int} # ho.n × ndims, 1-based level indices into each domain's values; empty until init
+    history::Vector{Float64} # per-generation best Audze-Eglais fitness from LHCoptim!; empty until init
 end
 
-LHSampler(; gens::Union{Int,Nothing}=nothing) = LHSampler(gens, Matrix{Int}(undef, 0, 0))
+LHSampler(; gens::Union{Int,Nothing}=nothing) = LHSampler(gens, Matrix{Int}(undef, 0, 0), Float64[])
 
 # A dimension's own contribution to the design's permutation search space -- a Continuous
 # column is a full n-permutation (n!), while a Categorical(levels) column's distinct
@@ -55,12 +57,13 @@ function init(s::LHSampler, ctx::AskContext)
     product = _discrete_product(ctx.candidates)
     ctx.n < product && @warn "LHSampler: n ($(ctx.n)) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
     dims = [_lhc_dimension(d) for d in ctx.candidates]
-    gens = something(s.gens, 10 * sum(_effective_levels(d, ctx.n) for d in ctx.candidates))
+    gens = something(s.gens, 10 * prod(_effective_levels(d, ctx.n) for d in ctx.candidates))
     initial = LatinHypercubeSampling.randomLHC(ctx.n, dims)
+    @info "LHC optimization via a genetic algorithm with $gens generations is starting, may take a few minutes. You can inspect the point spread optimization results for convergence using get_lhs_optim_history(ho)"
     X, hist = LatinHypercubeSampling.LHCoptim!(initial, gens; dims)
     _warn_not_converged(s, hist)
     ctx.n >= product && _warn_missing_combinations(X, ctx.candidates)
-    return LHSampler(s.gens, X)
+    return LHSampler(s.gens, X, hist)
 end
 
 # The best design found so late that more generations may well have kept improving it.
@@ -97,3 +100,14 @@ end
 
 on_tell!(::LHSampler, entry) = nothing
 exhausted(s::LHSampler, ho) = length(ho.runs) >= size(s.design, 1)
+
+"""
+    get_lhs_optim_history(ho) -> Vector{Float64}
+
+The per-generation best Audze-Eglais fitness from `LHCoptim!`, for inspecting whether the optimization converged. Only defined for a Hyperoptimizer using [`LHSampler`](@ref).
+"""
+function get_lhs_optim_history(ho)
+    ho.sampler isa LHSampler ||
+        throw(ArgumentError("get_lhs_optim_history: ho.sampler is a $(typeof(ho.sampler)), not LHSampler"))
+    return ho.sampler.history
+end

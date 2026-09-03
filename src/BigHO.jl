@@ -2,7 +2,7 @@ module BigHO
 
 export Hyperoptimizer, run!, settarget!
 export Stateful
-export RandomSampler, LHSampler
+export RandomSampler, LHSampler, get_lhs_optim_history
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
 export Nominal, Ordinal, Continuous

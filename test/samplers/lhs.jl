@@ -66,6 +66,18 @@
     ho_gens = Hyperoptimizer(a -> a, (a=Continuous(1, 20, 1),); sampler=LHSampler(gens=5), n=20)
     run!(ho_gens)
     @test sort([h[1] for h in history(ho_gens)]) == sort(collect(ho_gens.candidates[1].values))
+
+    # get_lhs_optim_history exposes the per-generation best fitness, one more than gens
+    # (generation 0's initial best, then one per generation), non-decreasing since the
+    # GA always carries its best design forward.
+    hist = get_lhs_optim_history(ho_gens)
+    @test hist isa Vector{Float64}
+    @test length(hist) == 6
+    @test issorted(hist)
+
+    # Only defined for a Hyperoptimizer actually using LHSampler.
+    ho_random = Hyperoptimizer(a -> a, (a=Nominal([1, 2, 3]),); n=3)
+    @test_throws ArgumentError get_lhs_optim_history(ho_random)
 end
 
 @testset "LHSampler overrides Continuous domains" begin
