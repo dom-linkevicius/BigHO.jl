@@ -16,4 +16,13 @@
     # producing an empty/broken figure.
     ho_empty = Hyperoptimizer(nothing, (a=Nominal([1]),); n=1)
     @test_throws ErrorException summaryplot(ho_empty)
+
+    # Custom kwargs are forwarded to Figure/Axis/the scatter, histogram, and
+    # line marks -- just check they're accepted without erroring.
+    @test summaryplot(ho;
+        figure_kwargs=(; size=(500, 500)),
+        axis_kwargs=(; titlesize=10),
+        scatter_kwargs=(; color=:red),
+        histogram_kwargs=(; color=:orange),
+        line_kwargs=(; color=:green)) isa CairoMakie.Figure
 end
