@@ -3,6 +3,7 @@ module BigHO
 export Hyperoptimizer, run!, settarget!
 export Stateful
 export RandomSampler, LHSampler, get_lhs_optim_history
+export Hyperband, ASHA
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
 export summaryplot
@@ -25,6 +26,7 @@ include("types.jl")
 include("samplers/sampler.jl")
 include("samplers/random.jl")
 include("samplers/lhs.jl")
+include("samplers/hyperband.jl")
 """
     FixedPlanSampler
 

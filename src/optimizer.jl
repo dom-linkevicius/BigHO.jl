@@ -53,6 +53,22 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n
     return Hyperoptimizer(objective, _linearize_for_lhs(candidates, n); sampler=sampler, n=n)
 end
 
+"""
+    Hyperoptimizer(objective, candidates::NamedTuple, sampler::Union{Hyperband,ASHA}; kwargs...)
+
+Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's own resource levels)
+to `candidates` -- the objective is then called as `f(r, params...)`. Throws if `candidates`
+already has an `:r` key.
+"""
+function Hyperoptimizer(objective, candidates::NamedTuple, sampler::Union{Hyperband,ASHA}; kwargs...)
+    haskey(candidates, :r) &&
+        throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
+    state = sampler.state
+    r_domain = Ordinal(_resource_levels(state.R, state.r_min, state.η))
+    extended = NamedTuple{(:r, keys(candidates)...)}((r_domain, values(candidates)...))
+    return Hyperoptimizer(objective, extended; sampler=sampler, kwargs...)
+end
+
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
 # Trials ever told an outcome, regardless of how many run! calls it took -- used for save_every's cadence.
