@@ -54,17 +54,16 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n
 end
 
 """
-    Hyperoptimizer(objective, candidates::NamedTuple, sampler::Union{Hyperband,ASHA}; kwargs...)
+    Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
 
 Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's own resource levels)
 to `candidates` -- the objective is then called as `f(r, params...)`. Throws if `candidates`
 already has an `:r` key.
 """
-function Hyperoptimizer(objective, candidates::NamedTuple, sampler::Union{Hyperband,ASHA}; kwargs...)
+function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
     haskey(candidates, :r) &&
         throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
-    state = sampler.state
-    r_domain = Ordinal(_resource_levels(state.R, state.r_min, state.η))
+    r_domain = Ordinal(_resource_levels(sampler.R, sampler.r_min, sampler.η))
     extended = NamedTuple{(:r, keys(candidates)...)}((r_domain, values(candidates)...))
     return Hyperoptimizer(objective, extended; sampler=sampler, kwargs...)
 end
