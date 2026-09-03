@@ -40,7 +40,7 @@ end
 # log-spaced), so there's no single `dt` to show -- don't assume it's a
 # range, dispatch on `d.type` instead.
 _domain_summary(d::Domain) = _domain_summary(d, Val(d.type))
-_domain_summary(d::Domain, ::Val{:continuous}) = "[$(first(d.values)), $(last(d.values))], $(length(d.values)) points"
+_domain_summary(d::Domain, ::Union{Val{:continuous_linear},Val{:continuous_arbitrary}}) = "[$(first(d.values)), $(last(d.values))], $(length(d.values)) points"
 _domain_summary(d::Domain, ::Union{Val{:nominal},Val{:ordinal}}) = length(d.values) <= 5 ? string(d.values) : "length: $(length(d.values))"
 
 function Base.show(io::IO, ho::Hyperoptimizer)

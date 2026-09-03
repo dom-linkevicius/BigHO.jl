@@ -13,7 +13,7 @@ using AlgebraOfGraphics
 # Julia threads -- can still narrow it down explicitly via test_args.
 const CONCERNS = Dict(
     "basic" => ["basic/domains.jl", "basic/artefacts.jl", "basic/failures.jl", "basic/manual.jl", "basic/persistence.jl", "basic/progress.jl", "basic/dataframe.jl", "basic/plotting.jl"],
-    "samplers" => ["samplers/random.jl"],
+    "samplers" => ["samplers/random.jl", "samplers/lhs.jl"],
     "serial" => ["executors/serial.jl"],
     "threaded" => ["executors/threaded.jl"],
     "distributed" => ["executors/distributed_queue.jl", "executors/equivalence.jl"],

@@ -7,7 +7,7 @@
         @test Continuous(1, 5, 1) isa BigHO.Domain
         @test Nominal(4).type == :nominal
         @test Ordinal(3).type == :ordinal
-        @test Continuous(1, 5, 1).type == :continuous
+        @test Continuous(1, 5, 1).type == :continuous_linear
     end
 
     nom = Nominal(4)
@@ -40,7 +40,7 @@
         # range-backed Continuous with the same points compare equal.
         c_vals = Continuous(1:1:5)
         @test c_vals isa BigHO.Domain
-        @test c_vals.type == :continuous
+        @test c_vals.type == :continuous_arbitrary # built via the values form, even though this particular sequence is evenly spaced
         @test c_vals.values == c.values
 
         # A plain, evenly-spaced Vector works too, not just a range.
@@ -50,14 +50,13 @@
         @test length(c_vec.values) == 5
 
         # Continuous does NOT require even spacing -- unlike the (min, max,
-        # dt) form (which always produces a uniform grid by construction),
-        # the values form accepts any increasing sequence, e.g. log-spaced.
-        # What distinguishes Continuous from Ordinal is the :continuous tag
-        # itself (relevant to future density-estimation machinery), not grid
-        # uniformity.
+        # dt) form (tagged :continuous_linear, always a uniform grid by
+        # construction), the values form (tagged :continuous_arbitrary)
+        # accepts any increasing sequence, e.g. log-spaced. Samplers that
+        # assume linear spacing (e.g. LHSampler) can reject the latter tag.
         logspaced = Continuous(exp10.(LinRange(-1, 3, 50)))
         @test logspaced isa BigHO.Domain
-        @test logspaced.type == :continuous
+        @test logspaced.type == :continuous_arbitrary
         @test length(logspaced.values) == 50
         @test all(rand(StableRNG(1), logspaced) in logspaced for _ in 1:200)
         @test logspaced.values[1] in logspaced
