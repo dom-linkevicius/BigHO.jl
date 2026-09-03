@@ -15,6 +15,7 @@ using StableRNGs: StableRNG
 using StatsBase: Weights, sample
 import JLD2
 import ProgressMeter
+import DataFrames
 import LatinHypercubeSampling
 
 include("domains.jl")
@@ -39,5 +40,6 @@ include("optimizer.jl")
 
 include("report.jl")
 include("persistence.jl")
+include("dataframe.jl")
 
 end # module
