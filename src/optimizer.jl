@@ -28,15 +28,29 @@ Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref) pe
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
+    n !== nothing || !(sampler isa FixedPlanSampler) ||
+        throw(ArgumentError("$(typeof(sampler)) needs n -- pass n explicitly, or construct via Hyperoptimizer(objective, candidates, sampler; n=...)"))
     cands = values(candidates)
     all(d -> d isa Domain, cands) ||
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
     params = collect(Symbol, keys(candidates))
-    ho = Hyperoptimizer(params, cands, sampler, objective, n,
-                         RunEntry[], Int[], 0, Initialized,
-                         nothing, ReentrantLock())
-    init!(sampler, AskContext(cands, 0, n))
-    return ho
+    initialized_sampler = init(sampler, AskContext(cands, 0, n))
+    return Hyperoptimizer(params, cands, initialized_sampler, objective, n,
+                           RunEntry[], Int[], 0, Initialized,
+                           nothing, ReentrantLock())
+end
+
+"""
+    Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
+
+Construct with `n` (the trial budget) given directly. Every `Continuous(min,max,dt)` domain's grid is rebuilt to exactly `n` linearly-spaced values over its original range, overriding whatever resolution it was originally given; `Continuous(values)` (arbitrary spacing) is rejected -- apply any nonlinear transform (e.g. log-scale) inside the objective instead.
+`Nominal`/`Ordinal` domains are left untouched.
+"""
+function Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
+    cands = values(candidates)
+    all(d -> d isa Domain, cands) ||
+        throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
+    return Hyperoptimizer(objective, _linearize_for_lhs(candidates, n); sampler=sampler, n=n)
 end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n

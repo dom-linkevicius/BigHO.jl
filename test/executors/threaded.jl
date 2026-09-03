@@ -8,7 +8,7 @@ function (s::BuggySampler)(ctx)
     s.n_calls == 3 && error("sampler bug")
     return [s.n_calls]
 end
-BigHO.init!(::BuggySampler, ctx) = nothing
+BigHO.init(s::BuggySampler, ctx) = s
 BigHO.exhausted(::BuggySampler, ho) = false
 BigHO.on_tell!(::BuggySampler, entry) = nothing
 
