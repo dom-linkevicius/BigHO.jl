@@ -80,6 +80,7 @@ end
 
 on_tell!(::LHSampler, entry) = nothing
 exhausted(s::LHSampler, ho) = length(ho.runs) >= size(s.design, 1)
+create_run_entry(::LHSampler, ho, id, params) = RunEntry(id, params)
 
 """
     get_lhs_optim_history(ho) -> Vector{Float64}

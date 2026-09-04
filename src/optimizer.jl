@@ -93,7 +93,7 @@ function ask!(ho::Hyperoptimizer)
         raw = ho.sampler(ho.candidates, ho.runs)
         id = length(ho.runs) + 1
         params = NamedTuple{Tuple(ho.params)}(Tuple(raw)) # e.g. (a = 1.5, b = true) -- labeled everywhere, not just in warnings
-        entry = RunEntry(id, params)
+        entry = create_run_entry(ho.sampler, ho, id, params)
         push!(ho.runs, entry)
         ho.n_pending += 1
         return entry

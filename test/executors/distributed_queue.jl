@@ -10,6 +10,7 @@ end
 BigHO.init(s::SequentialSampler, candidates, n) = s
 BigHO.exhausted(::SequentialSampler, ho) = false
 BigHO.on_tell!(::SequentialSampler, entry) = nothing
+BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id, params)
 
 @testset "DistributedQueue executor" begin
     @info "Testing DistributedQueue executor"

@@ -11,6 +11,7 @@ end
 BigHO.init(s::BuggySampler, candidates, n) = s
 BigHO.exhausted(::BuggySampler, ho) = false
 BigHO.on_tell!(::BuggySampler, entry) = nothing
+BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, params)
 
 @testset "Threaded executor" begin
     @info "Testing Threaded executor"

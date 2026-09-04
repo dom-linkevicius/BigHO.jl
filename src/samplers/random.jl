@@ -16,3 +16,4 @@ end
 on_tell!(::RandomSampler, entry) = nothing
 init(s::RandomSampler, candidates, n) = s
 exhausted(::RandomSampler, ho) = false
+create_run_entry(::RandomSampler, ho, id, params) = RunEntry(id, params)
