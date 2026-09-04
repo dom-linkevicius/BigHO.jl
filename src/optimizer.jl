@@ -68,7 +68,7 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHa
         candidates = _linearize_for_lhs(candidates, _total_draws(sampler.R, sampler.r_min, sampler.η))
     end
     r_domain = Ordinal(_resource_levels(sampler.R, sampler.r_min, sampler.η))
-    extended = NamedTuple{(:r, keys(candidates)...)}((r_domain, values(candidates)...))
+    extended = _add_r(candidates, r_domain)
     n = _total_trials(sampler.R, sampler.r_min, sampler.η)
     return Hyperoptimizer(objective, extended; sampler=sampler, n=n, kwargs...)
 end
@@ -145,7 +145,7 @@ function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
             push!(ho.completed, told.id)
             update_best!(ho, told)
         end
-        on_tell!(ho.sampler, told)
+        on_tell!(ho.sampler, ho.runs, told)
         return ho
     end
 end
@@ -164,7 +164,7 @@ Not saved if `run!` errors -- only the periodic `save_every` checkpoints, if any
 `show_progress` (on by default) shows a `ProgressMeter` bar tracking trials told against `ho.n`, which must be set for it (pass `show_progress=false` to run without a target).
 The bar always finishes, even on error, so a partially-drawn one is never left in the terminal.
 """
-_should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
+_should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho) || blocked(ho.sampler, ho)
 
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
               save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing,
