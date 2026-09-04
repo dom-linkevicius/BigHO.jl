@@ -4,10 +4,10 @@
     toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
 
     for (name, sampler) in (("ASHA", ASHA(R=81, η=3, r_min=1)), ("Hyperband", Hyperband(R=81, η=3, r_min=1)))
-        ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler; n=150)
+        ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
         run!(ho; show_progress=false)
-        @test length(ho.runs) == 150
-        @test length(ho.completed) == 150 # toy() never fails/NaNs
+        @test ho.n == length(ho.runs) # the one-pass total is self-determined, not passed in
+        @test length(ho.completed) == ho.n # toy() never fails/NaNs
         @test ho.status == BigHO.Finished
 
         # :r is a real candidate, prepended -- so it shows up in params/minimizer/history like any other.
@@ -44,7 +44,7 @@ end
             return loss, (call_id[], resumed_from)
         end
 
-        ho = Hyperoptimizer(Stateful(stateful_obj), (a=Nominal([0.0, 1.0, 2.0]), b=Nominal([0.0, 1.0])), sampler; n=60)
+        ho = Hyperoptimizer(Stateful(stateful_obj), (a=Nominal([0.0, 1.0, 2.0]), b=Nominal([0.0, 1.0])), sampler)
         run!(ho; show_progress=false)
 
         n_promoted = 0
@@ -63,48 +63,51 @@ end
     end
 end
 
-@testset "Hyperband/ASHA reserved :r and failure handling" begin
-    @info "Testing Hyperband/ASHA reserved :r name and NaN/failure exclusion"
+@testset "Hyperband/ASHA reserved :r, explicit n, and failure handling" begin
+    @info "Testing Hyperband/ASHA reserved :r name, explicit-n rejection, and NaN/failure exclusion"
 
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1); n=5)
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), Hyperband(R=9, η=3, r_min=1); n=5)
+    @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1))
+    @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), Hyperband(R=9, η=3, r_min=1))
+
+    # n is fully determined by R/η/r_min -- passing it explicitly is rejected, not silently ignored.
+    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
+    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
 
     # A trial that fails must never corrupt rung bookkeeping for the ones that succeed.
     let n_calls = Ref(0)
         global hb_flaky(r, a) = (n_calls[] += 1; n_calls[] % 5 == 0 ? NaN : a + 1.0 / r)
     end
-    ho = Hyperoptimizer(hb_flaky, (a=Nominal([1, 2, 3, 4, 5]),), ASHA(R=9, η=3, r_min=1); n=50)
+    ho = Hyperoptimizer(hb_flaky, (a=Nominal([1, 2, 3, 4, 5]),), ASHA(R=9, η=3, r_min=1))
     @test_logs (:warn, r"NaN") match_mode = :any run!(ho; show_progress=false)
     n_failed = count(e -> e.status == BigHO.Failed, ho.runs)
     @test n_failed > 0
     @test length(ho.completed) == length(ho.runs) - n_failed
 end
 
-@testset "Hyperband/ASHA settarget! resume" begin
-    @info "Testing Hyperband/ASHA settarget!/resume (neither is a FixedPlanSampler)"
+@testset "Hyperband/ASHA are FixedPlanSamplers" begin
+    @info "Testing Hyperband/ASHA are FixedPlanSamplers (fixed one-pass plan, no settarget!/resume)"
 
     for sampler in (ASHA(R=9, η=3, r_min=1), Hyperband(R=9, η=3, r_min=1))
-        ho = Hyperoptimizer((r, a) -> a, (a=Nominal([1, 2, 3]),), sampler; n=10)
+        @test sampler isa BigHO.FixedPlanSampler
+        ho = Hyperoptimizer((r, a) -> a, (a=Nominal([1, 2, 3]),), sampler)
         run!(ho; show_progress=false)
-        @test length(ho.runs) == 10
-        settarget!(ho, 20)
-        run!(ho; show_progress=false)
-        @test length(ho.runs) == 20
+        @test ho.status == BigHO.Finished
+        @test_throws ArgumentError settarget!(ho, ho.n + 10)
     end
 end
 
 @testset "Hyperband/ASHA under Threaded executor" begin
-    @info "Testing Hyperband/ASHA under the Threaded executor (sync rung-barrier under real concurrency)"
+    @info "Testing Hyperband/ASHA under the Threaded executor (cross-bracket promotion correctness under real concurrency)"
 
     toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
 
     for sampler in (ASHA(R=81, η=3, r_min=1), Hyperband(R=81, η=3, r_min=1))
-        ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler; n=200)
+        ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
         run!(ho; executor=Threaded(8), show_progress=false)
-        @test length(ho.runs) == 200
-        @test length(ho.completed) == 200
+        @test length(ho.runs) == ho.n # the full precomputed total is always reached, even across brackets
+        @test length(ho.completed) == ho.n
         @test ho.n_pending == 0
         @test ho.status == BigHO.Finished
-        @test sort([e.id for e in ho.runs]) == collect(1:200) # no id gaps/dupes under real concurrency
+        @test sort([e.id for e in ho.runs]) == collect(1:ho.n) # no id gaps/dupes under real concurrency
     end
 end

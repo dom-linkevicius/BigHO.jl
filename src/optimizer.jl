@@ -59,13 +59,24 @@ end
 Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's own resource levels)
 to `candidates` -- the objective is then called as `f(r, params...)`. Throws if `candidates`
 already has an `:r` key.
+`n` is computed automatically (the one-pass total across every bracket, fully determined by
+`R`/`η`/`r_min`) -- passing `n` explicitly throws, since `Hyperband`/`ASHA` are `FixedPlanSampler`s.
+If `sampler.inner isa LHSampler`, `candidates`' `Continuous(min,max,dt)` domains are rebuilt to
+match `inner`'s own budget (the total fresh bottom-rung draws across the whole run), same as
+`LHSampler`'s own dedicated constructor.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
     haskey(candidates, :r) &&
         throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
+    haskey(kwargs, :n) &&
+        throw(ArgumentError("Hyperoptimizer: $(typeof(sampler))'s trial count is fully determined by R/η/r_min -- don't pass n explicitly"))
+    if sampler.inner isa LHSampler
+        candidates = _linearize_for_lhs(candidates, _total_draws(sampler.R, sampler.r_min, sampler.η))
+    end
     r_domain = Ordinal(_resource_levels(sampler.R, sampler.r_min, sampler.η))
     extended = NamedTuple{(:r, keys(candidates)...)}((r_domain, values(candidates)...))
-    return Hyperoptimizer(objective, extended; sampler=sampler, kwargs...)
+    n = _total_trials(sampler.R, sampler.r_min, sampler.η)
+    return Hyperoptimizer(objective, extended; sampler=sampler, n=n, kwargs...)
 end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n

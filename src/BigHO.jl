@@ -26,13 +26,15 @@ include("types.jl")
 include("samplers/sampler.jl")
 include("samplers/random.jl")
 include("samplers/lhs.jl")
-include("samplers/hyperband.jl")
+include("samplers/sha_based/sh.jl")
+include("samplers/sha_based/hyperband.jl")
+include("samplers/sha_based/asha.jl")
 """
     FixedPlanSampler
 
-Sampler types whose plan is fixed to `n` at construction (e.g. a Latin Hypercube design matrix), so `settarget!` can't work for them.
+Sampler types whose plan is fixed at construction (e.g. a Latin Hypercube design matrix, or Hyperband/ASHA's own bracket schedule), so `settarget!` can't work for them.
 """
-const FixedPlanSampler = Union{LHSampler}
+const FixedPlanSampler = Union{LHSampler,Hyperband,ASHA}
 
 include("executors/executor.jl")
 include("executors/serial.jl")
