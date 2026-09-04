@@ -107,24 +107,6 @@ _sample_sh_inner(inner::LHSampler, candidates, runs) =
 init(s::SuccessiveHalving, candidates, n) =
     typeof(s)(s.R, s.r_min, s.η, init(s.inner, candidates[2:end], _total_draws(s.R, s.r_min, s.η)))
 
-# Warn exactly once per rung, right when it resolves (on the tell! that empties its last Pending
-# entry) -- _bracket_decision is called many times per ask! and can't warn without spamming.
-function on_tell!(s::SuccessiveHalving, runs, entry)
-    k = entry.metadata[:bracket_k]
-    i = entry.metadata[:rung]
-    i < k || return nothing # top rung: no promotion decision is ever made from here
-    _rung_resolved(s.R, s.r_min, s.η, runs, k, i) || return nothing
-    told = _told_sorted(runs, k, i)
-    if isempty(told)
-        @warn "$(typeof(s)): every trial at rung $i of bracket $k failed -- abandoning bracket $k"
-    else
-        wanted = _capacity(s.R, s.r_min, s.η, k, i + 1)
-        length(told) < wanted &&
-            @warn "$(typeof(s)): only $(length(told))/$wanted trials completed at rung $i of bracket $k -- promoting fewer than planned into rung $(i + 1)"
-    end
-    return nothing
-end
-
 # _bracket_decision is pure (never calls `inner`), so exhausted/blocked/create_run_entry can
 # safely re-derive the same decision the callable already resolved for this ask!, without
 # re-triggering a stateful sampler like RandomSampler a second time.

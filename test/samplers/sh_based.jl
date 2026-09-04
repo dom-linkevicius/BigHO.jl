@@ -19,8 +19,7 @@ end
 
     toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
 
-    # ASHA(R=81, η=3, r_min=1) not yet re-implemented on the SuccessiveHalving redesign -- MethodErrors on run!
-    for (name, sampler) in (("Hyperband", Hyperband(R=81, η=3, r_min=1)),)
+    for (name, sampler) in (("Hyperband", Hyperband(R=81, η=3, r_min=1)), ("ASHA", ASHA(R=81, η=3, r_min=1)))
         ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
         run!(ho; show_progress=false)
         @test ho.n == length(ho.runs) # the one-pass total is self-determined, not passed in
@@ -52,8 +51,7 @@ end
     # increasing call counter is the tag used to identify "which call produced this
     # artefact" below. A promoted trial's pre_artefact must exactly match a real, earlier,
     # Completed trial's post_artefact -- never dangling, never pointing forward in time.
-    # ASHA(R=27, η=3, r_min=1) not yet re-implemented on the SuccessiveHalving redesign -- MethodErrors on run!
-    for sampler in (Hyperband(R=27, η=3, r_min=1),)
+    for sampler in (Hyperband(R=27, η=3, r_min=1), ASHA(R=27, η=3, r_min=1))
         call_id = Ref(0)
         function stateful_obj(r, a, b; pre_artefact=nothing)
             call_id[] += 1
@@ -84,31 +82,30 @@ end
 @testset "Hyperband/ASHA reserved :r, explicit n, and failure handling" begin
     @info "Testing Hyperband/ASHA reserved :r name, explicit-n rejection, and NaN/failure exclusion"
 
-    # ASHA not yet re-implemented on the SuccessiveHalving redesign -- not tested at all for now.
-    # @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1))
     @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), Hyperband(R=9, η=3, r_min=1))
+    @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1))
 
     # n is fully determined by R/η/r_min -- passing it explicitly is rejected, not silently ignored.
-    # @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
     @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
+    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
 
     # A trial that fails must never corrupt rung bookkeeping for the ones that succeed.
-    # ASHA(R=9, η=3, r_min=1) not yet re-implemented on the SuccessiveHalving redesign -- MethodErrors on run!
-    let n_calls = Ref(0)
-        global hb_flaky(r, a) = (n_calls[] += 1; n_calls[] % 5 == 0 ? NaN : a + 1.0 / r)
+    n_calls = Ref(0)
+    global hb_flaky(r, a) = (n_calls[] += 1; n_calls[] % 5 == 0 ? NaN : a + 1.0 / r)
+    for sampler in (Hyperband(R=9, η=3, r_min=1), ASHA(R=9, η=3, r_min=1))
+        n_calls[] = 0
+        ho = Hyperoptimizer(hb_flaky, (a=Nominal([1, 2, 3, 4, 5]),), sampler)
+        @test_logs (:warn, r"NaN") match_mode = :any run!(ho; show_progress=false)
+        n_failed = count(e -> e.status == BigHO.Failed, ho.runs)
+        @test n_failed > 0
+        @test length(ho.completed) == length(ho.runs) - n_failed
     end
-    ho = Hyperoptimizer(hb_flaky, (a=Nominal([1, 2, 3, 4, 5]),), Hyperband(R=9, η=3, r_min=1))
-    @test_logs (:warn, r"NaN") match_mode = :any run!(ho; show_progress=false)
-    n_failed = count(e -> e.status == BigHO.Failed, ho.runs)
-    @test n_failed > 0
-    @test length(ho.completed) == length(ho.runs) - n_failed
 end
 
 @testset "Hyperband/ASHA are FixedPlanSamplers" begin
     @info "Testing Hyperband/ASHA are FixedPlanSamplers (fixed one-pass plan, no settarget!/resume)"
 
-    # ASHA(R=9, η=3, r_min=1) not yet re-implemented on the SuccessiveHalving redesign -- MethodErrors on run!
-    for sampler in (Hyperband(R=9, η=3, r_min=1),)
+    for sampler in (Hyperband(R=9, η=3, r_min=1), ASHA(R=9, η=3, r_min=1))
         @test sampler isa BigHO.FixedPlanSampler
         ho = Hyperoptimizer((r, a) -> a, (a=Nominal([1, 2, 3]),), sampler)
         run!(ho; show_progress=false)
@@ -122,8 +119,7 @@ end
 
     toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
 
-    # ASHA(R=81, η=3, r_min=1) not yet re-implemented on the SuccessiveHalving redesign -- MethodErrors on run!
-    for sampler in (Hyperband(R=81, η=3, r_min=1),)
+    for sampler in (Hyperband(R=81, η=3, r_min=1), ASHA(R=81, η=3, r_min=1))
         ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
         run!(ho; executor=Threaded(8), show_progress=false)
         @test length(ho.runs) == ho.n # the full precomputed total is always reached, even across brackets
@@ -131,6 +127,37 @@ end
         @test ho.n_pending == 0
         @test ho.status == BigHO.Finished
         @test sort([e.id for e in ho.runs]) == collect(1:ho.n) # no id gaps/dupes under real concurrency
+    end
+end
+
+@testset "Hyperband/ASHA under DistributedQueue executor" begin
+    @info "Testing Hyperband/ASHA under the DistributedQueue executor (cross-bracket promotion correctness under real concurrency)"
+
+    # n is small: DistributedQueue pays a real process-spawn cost per trial.
+    @everywhere using BigHO
+    @everywhere sh_dq_toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+
+    sh_dq_spawn_worker() = first(addprocs(1))
+    function sh_dq_setup_worker(pid)
+        Distributed.remotecall_eval(Main, [pid], :(begin
+            using BigHO
+            sh_dq_toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+        end))
+        return nothing
+    end
+
+    try
+        for sampler in (Hyperband(R=9, η=3, r_min=1), ASHA(R=9, η=3, r_min=1))
+            ho = Hyperoptimizer(sh_dq_toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
+            run!(ho; executor=DistributedQueue(3; spawn_worker=sh_dq_spawn_worker, setup_worker=sh_dq_setup_worker), show_progress=false)
+            @test length(ho.runs) == ho.n # the full precomputed total is always reached, even across brackets
+            @test length(ho.completed) == ho.n
+            @test ho.n_pending == 0
+            @test ho.status == BigHO.Finished
+            @test sort([e.id for e in ho.runs]) == collect(1:ho.n) # no id gaps/dupes under real concurrency
+        end
+    finally
+        rmprocs(filter(!=(1), workers()))
     end
 end
 

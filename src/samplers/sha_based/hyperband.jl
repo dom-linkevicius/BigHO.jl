@@ -34,3 +34,23 @@ end
 # sampler (e.g. BOHB, needing every rung of every bracket to fit its KDE prior) would define its
 # own method here instead, not delegating to `inner` at all.
 _sample_sh_inner(s::Hyperband, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
+
+# Warn exactly once per rung, right when it resolves (on the tell! that empties its last Pending
+# entry) -- _bracket_decision is called many times per ask! and can't warn without spamming.
+# Hyperband-specific: relies on _rung_resolved's "upstream rung fully resolved first" precondition,
+# which only Hyperband's own dispatch pattern actually guarantees (ASHA promotes before that).
+function on_tell!(s::Hyperband, runs, entry)
+    k = entry.metadata[:bracket_k]
+    i = entry.metadata[:rung]
+    i < k || return nothing # top rung: no promotion decision is ever made from here
+    _rung_resolved(s.R, s.r_min, s.η, runs, k, i) || return nothing
+    told = _told_sorted(runs, k, i)
+    if isempty(told)
+        @warn "$(typeof(s)): every trial at rung $i of bracket $k failed -- abandoning bracket $k"
+    else
+        wanted = _capacity(s.R, s.r_min, s.η, k, i + 1)
+        length(told) < wanted &&
+            @warn "$(typeof(s)): only $(length(told))/$wanted trials completed at rung $i of bracket $k -- promoting fewer than planned into rung $(i + 1)"
+    end
+    return nothing
+end
