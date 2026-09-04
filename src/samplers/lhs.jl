@@ -41,24 +41,24 @@ end
 
 _discrete_product(candidates) = prod((length(d.values) for d in candidates if d.type in (:nominal, :ordinal)); init=1)
 
-function init(s::LHSampler, ctx::AskContext)
-    for d in ctx.candidates
+function init(s::LHSampler, candidates, n)
+    for d in candidates
         d.type !== :continuous_arbitrary ||
             throw(ArgumentError("LHSampler doesn't support Continuous(values) domains (arbitrary spacing) -- use Continuous(min, max, dt), or apply the nonlinear transform inside the objective itself"))
-        d.type !== :continuous_linear || length(d.values) == ctx.n ||
-            throw(ArgumentError("LHSampler requires every Continuous domain to have exactly n ($(ctx.n)) values, got $(length(d.values))"))
+        d.type !== :continuous_linear || length(d.values) == n ||
+            throw(ArgumentError("LHSampler requires every Continuous domain to have exactly n ($n) values, got $(length(d.values))"))
     end
-    product = _discrete_product(ctx.candidates)
-    ctx.n < product && @warn "LHSampler: n ($(ctx.n)) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
-    dims = [_lhc_dimension(d) for d in ctx.candidates]
-    initial = LatinHypercubeSampling.randomLHC(ctx.n, dims)
+    product = _discrete_product(candidates)
+    n < product && @warn "LHSampler: n ($n) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
+    dims = [_lhc_dimension(d) for d in candidates]
+    initial = LatinHypercubeSampling.randomLHC(n, dims)
     @info "LHC optimization via a genetic algorithm with $(s.gens) generations is starting, may take a few minutes. You can inspect the point spread optimization results for convergence using get_lhs_optim_history(ho)"
     X, hist = LatinHypercubeSampling.LHCoptim!(initial, s.gens; dims)
-    ctx.n >= product && _warn_missing_combinations(X, ctx.candidates)
+    n >= product && _warn_missing_combinations(X, candidates)
     return LHSampler(s.gens, X, hist)
 end
 
-# Only meaningful when full coverage is theoretically achievable (ctx.n >= product) -- checks
+# Only meaningful when full coverage is theoretically achievable (n >= product) -- checks
 # whether the GA-optimized design actually achieved it, since that isn't guaranteed.
 function _warn_missing_combinations(design::Matrix{Int}, candidates)
     discrete_dims = findall(d -> d.type in (:nominal, :ordinal), candidates)
@@ -73,9 +73,9 @@ function _warn_missing_combinations(design::Matrix{Int}, candidates)
     return nothing
 end
 
-function (s::LHSampler)(ctx::AskContext)
-    row = ctx.n_asked + 1
-    return [d.values[s.design[row, dim]] for (dim, d) in enumerate(ctx.candidates)]
+function (s::LHSampler)(candidates, runs)
+    row = length(runs) + 1
+    return [d.values[s.design[row, dim]] for (dim, d) in enumerate(candidates)]
 end
 
 on_tell!(::LHSampler, entry) = nothing
