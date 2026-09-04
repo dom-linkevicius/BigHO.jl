@@ -5,6 +5,7 @@ export Stateful
 export RandomSampler, LHSampler, get_lhs_optim_history
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
+export summaryplot
 export Nominal, Ordinal, Continuous
 export load_hyperoptimizer
 
@@ -41,5 +42,6 @@ include("optimizer.jl")
 include("report.jl")
 include("persistence.jl")
 include("dataframe.jl")
+include("plotting.jl")
 
 end # module
