@@ -30,6 +30,6 @@ function exhausted end
 """
     create_run_entry(sampler, ho, id, params) -> RunEntry
 
-Builds the `RunEntry` for a freshly-asked trial. Most samplers just wrap `params` with no `pre_artefact`; samplers resuming from a prior trial's `post_artefact` (e.g. a promoted [`Hyperband`](@ref)/[`ASHA`](@ref) candidate) seed it accordingly instead.
+Builds the `RunEntry` for a freshly-asked trial. Most samplers just wrap `params` with no `pre_artefact`; samplers resuming from a prior trial's `post_artefact` seed it accordingly instead.
 """
 function create_run_entry end
