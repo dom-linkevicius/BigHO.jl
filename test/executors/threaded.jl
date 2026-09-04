@@ -3,14 +3,15 @@ mutable struct BuggySampler <: BigHO.Sampler
     n_calls::Int
 end
 BuggySampler() = BuggySampler(0)
-function (s::BuggySampler)(ctx)
+function (s::BuggySampler)(candidates, runs)
     s.n_calls += 1
     s.n_calls == 3 && error("sampler bug")
     return [s.n_calls]
 end
-BigHO.init(s::BuggySampler, ctx) = s
+BigHO.init(s::BuggySampler, candidates, n) = s
 BigHO.exhausted(::BuggySampler, ho) = false
 BigHO.on_tell!(::BuggySampler, entry) = nothing
+BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, params)
 
 @testset "Threaded executor" begin
     @info "Testing Threaded executor"
