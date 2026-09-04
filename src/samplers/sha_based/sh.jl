@@ -1,16 +1,5 @@
-# Shared internals for Hyperband/ASHA -- both are successive-halving over a sequence of
-# brackets of decreasing aggressiveness (k = smax+1 rungs, starting at r_min, down to k = 1,
-# a single rung at R -- plain random search), run through exactly once (Li et al. 2018's
-# Algorithm 1 is a single finite pass, not an indefinite loop) -- so the total trial count
-# is fully determined by R/η/r_min alone, no external n needed. They differ only in when a
-# promotion is allowed to fire (see _asha_ready in asha.jl / _hyperband_ready in hyperband.jl).
-# Brackets are independent: each one's own promotion process runs to completion on its own
-# schedule, so every live bracket is checked for a promotable candidate on every ask (oldest
-# first), never just the newest one -- only once nothing is promotable anywhere does a fresh
-# draw happen, into whichever bracket is currently active. A new bracket becomes active as
-# soon as the previous one's bottom rung has been fully DISPATCHED (not necessarily told);
-# older brackets are kept around (never pruned) so a still-pending trial's eventual `tell!`,
-# and any promotion it later unlocks, still finds its way to the bracket it actually belongs to.
+# Shared internals for Hyperband/ASHA: successive-halving over one finite pass of brackets, differing only in their promotion-readiness gate (_asha_ready/_hyperband_ready).
+# Brackets are independent and never pruned -- every live one is checked for a promotable candidate (oldest first) before a fresh draw starts a new one.
 
 struct SHABracket
     k::Int                                   # number of rungs; k=smax+1 most aggressive, k=1 = random search
@@ -39,10 +28,8 @@ _smax(R::Int, r_min::Int, η::Int) = floor(Int, log(R / r_min) / log(η))
 
 _resource_levels(R::Int, r_min::Int, η::Int) = [r_min * η^i for i in 0:_smax(R, r_min, η)]
 
-# Builds bracket k (k=1..smax+1); n0 chosen so this bracket's total resource usage
-# (k * n0 * r0) is approximately constant (≈ (smax+1)*R) across brackets, matching the
-# original algorithm's design goal. Verified bit-for-bit against Li et al. 2018's own
-# Algorithm 1 formulas (n = ⌈(smax+1)·η^s/(s+1)⌉, n_i = ⌊n·η^-i⌋, under s = k-1).
+# Builds bracket k (1..smax+1); n0/capacities match Li et al. 2018's Algorithm 1 formulas
+# (n=⌈(smax+1)η^s/(s+1)⌉, n_i=⌊n·η^-i⌋, s=k-1) bit-for-bit.
 function _new_bracket(k::Int, R::Int, r_min::Int, η::Int)
     levels = _resource_levels(R, r_min, η) # levels[i] = r_min*η^(i-1); only ever non-negative exponents
     smax = length(levels) - 1
@@ -52,26 +39,21 @@ function _new_bracket(k::Int, R::Int, r_min::Int, η::Int)
     return SHABracket(k, resources, capacities, zeros(Int, k), [Tuple{Int,Float64}[] for _ in 1:k], [Set{Int}() for _ in 1:k])
 end
 
-# The one-pass total trial count across every bracket (k=1..smax+1) -- Hyperband/ASHA's own
-# analogue of LHSampler's n: fully determined by R/η/r_min, never given externally.
+# One-pass total trial count across every bracket -- fully determined by R/η/r_min, no external n.
 function _total_trials(R::Int, r_min::Int, η::Int)
     smax = _smax(R, r_min, η)
     return sum(sum(_new_bracket(k, R, r_min, η).capacities) for k in 1:(smax+1))
 end
 
-# Total FRESH draws across the whole run (bottom rung only, every bracket) -- excludes
-# promotions, which reuse an existing candidate's params rather than asking `inner` for a new
-# one. This is `inner`'s own budget: one global design covering every bracket's bottom rung,
-# not a separate one per bracket.
+# Total fresh (non-promoted) draws across the whole run -- `inner`'s own budget, one global
+# design covering every bracket's bottom rung.
 function _total_draws(R::Int, r_min::Int, η::Int)
     smax = _smax(R, r_min, η)
     return sum(_new_bracket(k, R, r_min, η).capacities[1] for k in 1:(smax+1))
 end
 
-# Finds a promotable trial, checking rungs top-down (excluding the top rung, which has
-# nowhere to promote to) -- ASHA's own get_job() prioritizes advancing near-complete
-# configurations over starting new ones at the bottom. `ready(bracket, i)` gates whether
-# rung i's current tally is eligible to be checked at all.
+# Finds a promotable trial, rungs top-down (top rung excluded, nowhere to promote to);
+# `ready(bracket, i)` gates whether rung i is eligible to be checked yet.
 function _find_promotion(bracket::SHABracket, η::Int, ready)
     for i in (bracket.k-1):-1:1
         ready(bracket, i) || continue
@@ -86,8 +68,7 @@ function _find_promotion(bracket::SHABracket, η::Int, ready)
     return nothing
 end
 
-# n (the planned total trial count) isn't relevant here -- inner's own budget is _total_draws
-# (fresh bottom-rung draws only, excludes promotions), computed from R/η/r_min directly.
+# n (ho's planned total) is irrelevant here -- inner's budget is _total_draws, from R/η/r_min directly.
 function init(s::SuccessiveHalving, candidates, n)
     s.inner = init(s.inner, candidates[2:end], _total_draws(s.R, s.r_min, s.η)) # drop the reserved :r slot
     return s
@@ -104,9 +85,8 @@ function _promote!(s::SuccessiveHalving, bracket::SHABracket, runs, rung::Int, p
     return vcat(bracket.resources[new_rung], params)
 end
 
-# Delegates to `inner` for the actual draw -- `inner` sees only fresh (never-promoted) bottom-rung
-# entries from every bracket so far, so its own `ask!`-relative bookkeeping (e.g. LHSampler's row
-# index) lines up with the single global design it was init'd against.
+# Delegates to `inner`, which sees only fresh (non-promoted) entries so far, keeping its own
+# row/index bookkeeping (e.g. LHSampler's) aligned with the design it was init'd against.
 function _draw_new!(s::SuccessiveHalving, bracket::SHABracket, candidates, runs)
     fresh_runs = filter(e -> get(e.metadata, :rung, nothing) == 1, runs)
     raw_params = s.inner(candidates[2:end], fresh_runs) # skip the reserved :r slot (position 1)
@@ -117,13 +97,8 @@ function _draw_new!(s::SuccessiveHalving, bracket::SHABracket, candidates, runs)
     return vcat(bracket.resources[1], raw_params)
 end
 
-# Brackets are independent -- each one's own promotion process runs to completion on its own
-# schedule, regardless of how many newer brackets have since started. So every live bracket
-# (not just the active one) is checked for a promotable candidate first, oldest to newest
-# (favoring the most aggressive/longest-running bracket's near-complete configs, matching
-# ASHA's own single-bracket preference for finishing over starting). Only once nothing is
-# promotable anywhere does a fresh draw happen, into the active bracket -- advancing to a new
-# one first if the active bracket's bottom rung is already fully dispatched.
+# Every live bracket is checked for a promotable candidate first (oldest first); only once
+# nothing's promotable does a fresh draw happen, advancing to a new bracket if needed.
 function _ask(s::SuccessiveHalving, ready, candidates, runs)
     for bracket in s.brackets
         promotion = _find_promotion(bracket, s.η, ready)
@@ -137,9 +112,8 @@ function _ask(s::SuccessiveHalving, ready, candidates, runs)
     return _draw_new!(s, active, candidates, runs)
 end
 
-# Not exhausted while anything is currently promotable in any live bracket (checked fresh
-# each call, so a later tell! that unblocks an older bracket's promotion is picked back up),
-# nor while the active bracket can still take a fresh draw or a new bracket can start.
+# Not exhausted while anything's promotable in any live bracket (re-checked fresh each call),
+# or while a fresh draw/new bracket is still possible.
 function _exhausted(s::SuccessiveHalving, ready)
     any(bracket -> _find_promotion(bracket, s.η, ready) !== nothing, s.brackets) && return false
     active = s.brackets[end]

@@ -56,14 +56,8 @@ end
 """
     Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
 
-Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's own resource levels)
-to `candidates` -- the objective is then called as `f(r, params...)`. Throws if `candidates`
-already has an `:r` key.
-`n` is computed automatically (the one-pass total across every bracket, fully determined by
-`R`/`η`/`r_min`) -- passing `n` explicitly throws, since `Hyperband`/`ASHA` are `FixedPlanSampler`s.
-If `sampler.inner isa LHSampler`, `candidates`' `Continuous(min,max,dt)` domains are rebuilt to
-match `inner`'s own budget (the total fresh bottom-rung draws across the whole run), same as
-`LHSampler`'s own dedicated constructor.
+Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's resource levels); throws if `candidates` already has one. `n` is computed automatically -- passing it explicitly throws.
+If `sampler.inner isa LHSampler`, `Continuous` domains are rebuilt to match `inner`'s own draw budget, same as `LHSampler`'s own dedicated constructor.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
     haskey(candidates, :r) &&

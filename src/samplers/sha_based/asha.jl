@@ -4,17 +4,8 @@ _asha_ready(bracket::SHABracket, i::Int) = !isempty(bracket.told[i])
 """
     ASHA(; R, η=3, r_min=1)
 
-Asynchronous Hyperband (Li et al. 2020): the same one-pass bracket sequence as
-[`Hyperband`](@ref), but a trial is promoted to the next rung the instant it's verifiably in
-the top `1/η` of whatever has been told so far at that rung -- never blocks. Brackets are
-independent -- each one's own promotion process keeps running to completion regardless of how
-many newer brackets have since started -- and a new bracket becomes active as soon as the
-previous one's bottom rung has been fully dispatched (not necessarily told). The paper
-doesn't fully specify this multi-bracket scheduling, so this is an interpretation of it, not
-a transcription.
-
-Construct via `Hyperoptimizer(objective, candidates, ASHA(...))` -- see [`Hyperband`](@ref)
-for the reserved `:r` candidate and objective-calling convention, both identical here.
+Asynchronous Hyperband (Li et al. 2020): same one-pass brackets as [`Hyperband`](@ref), but promotes the instant a trial is verifiably top-`1/η` of what's told so far -- never blocks. Multi-bracket scheduling isn't fully specified by the paper, so this is an interpretation, not a transcription.
+Construction, `:r`, and the objective-calling convention are identical to [`Hyperband`](@ref).
 """
 const ASHA = SuccessiveHalving{false}
 
