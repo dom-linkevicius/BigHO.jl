@@ -15,12 +15,12 @@ function _bracket_decision(s::Hyperband, k::Int, runs)
         _rung_resolved(s, runs, k, i) || return (:wait,)
         told = _told_sorted(runs, k, i)
         target = min(_capacity(R, r_min, η, k, i + 1), length(told))
-        target == 0 && return k > 1 ? _bracket_decision(s, k - 1, runs) : (:exhausted,)
+        target == 0 && return _fallback_bracket(s, k, runs)
         n_promoted = _dispatched_count(runs, k, i + 1)
         n_promoted < target && return (:promote, k, i, first(told[n_promoted+1]))
     end
     _rung_resolved(s, runs, k, k) || return (:wait,)
-    return k > 1 ? _bracket_decision(s, k - 1, runs) : (:exhausted,)
+    return _fallback_bracket(s, k, runs)
 end
 
 # Whether rung i is done: fully dispatched (possibly shrunk by failures) and nothing Pending.
@@ -48,8 +48,7 @@ function on_tell!(s::Hyperband, runs, entry)
         @warn "$(typeof(s)): every trial at rung $i of bracket $k failed -- abandoning bracket $k"
     else
         wanted = _capacity(s.R, s.r_min, s.η, k, i + 1)
-        length(told) < wanted &&
-            @warn "$(typeof(s)): only $(length(told))/$wanted trials completed at rung $i of bracket $k -- promoting fewer than planned into rung $(i + 1)"
+        length(told) < wanted && @warn "$(typeof(s)): only $(length(told))/$wanted trials completed at rung $i of bracket $k -- promoting fewer than planned into rung $(i + 1)"
     end
     return nothing
 end

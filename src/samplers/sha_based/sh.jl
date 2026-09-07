@@ -64,6 +64,9 @@ function (s::SuccessiveHalving)(candidates, runs)
     return vcat(_resource(s.R, s.r_min, s.η, k, i + 1), params)
 end
 
+# Shared terminal tail-call: fall back to the previous bracket, or declare exhausted.
+_fallback_bracket(s::SuccessiveHalving, k::Int, runs) = k > 1 ? _bracket_decision(s, k - 1, runs) : (:exhausted,)
+
 _sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
 _sample_sh_inner(inner::Sampler, candidates, runs) = inner(_drop_r(candidates), runs)
 # LHSampler is row-indexed off length(runs) -- needs only fresh (never-promoted) draws so its

@@ -22,6 +22,8 @@
         all(hi in ho.candidates[i] for (i, hi) in enumerate(h))
     end
 
+    @test !BigHO.blocked(ho.sampler, ho)
+
     # Space-filling: a Continuous domain's n values are each used exactly once
     # across the n trials -- the defining property of a Latin Hypercube design.
     a_draws = [h[1] for h in history(ho)]
