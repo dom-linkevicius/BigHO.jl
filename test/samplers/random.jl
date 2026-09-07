@@ -51,6 +51,13 @@
     @test Hyperoptimizer((a) -> a, (a=Nominal([1, 2, 3]),); n=0) isa Hyperoptimizer
 end
 
+@testset "RandomSampler interface" begin
+    @info "Testing RandomSampler's exhausted/blocked always return false"
+    ho = Hyperoptimizer(a -> a, (a=Nominal([1, 2, 3]),); n=3)
+    @test !BigHO.exhausted(ho.sampler, ho)
+    @test !BigHO.blocked(ho.sampler, ho)
+end
+
 @testset "Categorical" begin
     @info "Testing Categorical"
     f(a, b=true; c=10) = sum(@. 100 + (a-3)^2 + (b ? 10 : 20) + (c-100)^2)

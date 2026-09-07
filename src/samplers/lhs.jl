@@ -78,8 +78,9 @@ function (s::LHSampler)(candidates, runs)
     return [d.values[s.design[row, dim]] for (dim, d) in enumerate(candidates)]
 end
 
-on_tell!(::LHSampler, entry) = nothing
+on_tell!(::LHSampler, runs, entry) = nothing
 exhausted(s::LHSampler, ho) = length(ho.runs) >= size(s.design, 1)
+blocked(::LHSampler, ho) = false
 create_run_entry(::LHSampler, ho, id, params) = RunEntry(id, params)
 
 """

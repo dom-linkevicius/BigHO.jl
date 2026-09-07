@@ -53,6 +53,26 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n
     return Hyperoptimizer(objective, _linearize_for_lhs(candidates, n); sampler=sampler, n=n)
 end
 
+"""
+    Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
+
+Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's resource levels); throws if `candidates` already has one. `n` is computed automatically -- passing it explicitly throws.
+If `sampler.inner isa LHSampler`, `Continuous` domains are rebuilt to match `inner`'s own draw budget, same as `LHSampler`'s own dedicated constructor.
+"""
+function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
+    haskey(candidates, :r) &&
+        throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
+    haskey(kwargs, :n) &&
+        throw(ArgumentError("Hyperoptimizer: $(typeof(sampler))'s trial count is fully determined by R/η/r_min -- don't pass n explicitly"))
+    if sampler.inner isa LHSampler
+        candidates = _linearize_for_lhs(candidates, _total_draws(sampler.R, sampler.r_min, sampler.η))
+    end
+    r_domain = Ordinal(_resource_levels(sampler.R, sampler.r_min, sampler.η))
+    extended = _add_r(candidates, r_domain)
+    n = _total_trials(sampler.R, sampler.r_min, sampler.η)
+    return Hyperoptimizer(objective, extended; sampler=sampler, n=n, kwargs...)
+end
+
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
 
 # Trials ever told an outcome, regardless of how many run! calls it took -- used for save_every's cadence.
@@ -125,7 +145,7 @@ function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
             push!(ho.completed, told.id)
             update_best!(ho, told)
         end
-        on_tell!(ho.sampler, told)
+        on_tell!(ho.sampler, ho.runs, told)
         return ho
     end
 end
@@ -144,7 +164,7 @@ Not saved if `run!` errors -- only the periodic `save_every` checkpoints, if any
 `show_progress` (on by default) shows a `ProgressMeter` bar tracking trials told against `ho.n`, which must be set for it (pass `show_progress=false` to run without a target).
 The bar always finishes, even on error, so a partially-drawn one is never left in the terminal.
 """
-_should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho)
+_should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho) || blocked(ho.sampler, ho)
 
 function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
               save_every::Union{Int,Nothing}=nothing, save_path::Union{AbstractString,Nothing}=nothing,

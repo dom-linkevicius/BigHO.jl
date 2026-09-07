@@ -13,7 +13,8 @@ function (s::RandomSampler)(candidates, runs)
     return [rand(s.rng, d) for d in candidates]
 end
 
-on_tell!(::RandomSampler, entry) = nothing
+on_tell!(::RandomSampler, runs, entry) = nothing
 init(s::RandomSampler, candidates, n) = s
 exhausted(::RandomSampler, ho) = false
+blocked(::RandomSampler, ho) = false
 create_run_entry(::RandomSampler, ho, id, params) = RunEntry(id, params)
