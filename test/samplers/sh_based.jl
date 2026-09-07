@@ -220,3 +220,72 @@ end
         @test count(l -> l.level == Logging.Warn && occursin("promoting fewer than planned", l.message), logs3) == 1
     end
 end
+
+@testset "Hyperband/ASHA with LHSampler inner" begin
+    @info "Testing Hyperband/ASHA with LHSampler as inner (fresh draws via LHS instead of RandomSampler)"
+
+    toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+
+    for sampler in (Hyperband(R=27, η=3, r_min=1; inner=LHSampler(gens=5)), ASHA(R=27, η=3, r_min=1; inner=LHSampler(gens=5)))
+        ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
+        run!(ho; show_progress=false)
+        @test ho.n == length(ho.runs)
+        @test length(ho.completed) == ho.n
+        @test ho.status == BigHO.Finished
+    end
+end
+
+@testset "ASHA rung-level failure handling (bracket-stall/rung-failure warnings)" begin
+    @info "Testing ASHA's on_tell! bracket-stalled and rung-completed-with-failure warnings"
+
+    # R=9, η=3, r_min=1 -> bracket 3 has capacities rung1=9, rung2=3, rung3=1 (see _capacity).
+    s = ASHA(R=9, η=3, r_min=1)
+
+    function rung1_entries(k, n_total, n_failed)
+        runs = BigHO.RunEntry[]
+        for idx in 1:n_total
+            e = BigHO.RunEntry(idx, (r=1, a=idx), Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
+            e = idx <= n_failed ? BigHO._with_result(e, BigHO.Failed, missing, nothing; error=NaN) :
+                                   BigHO._with_result(e, BigHO.Completed, Float64(idx), nothing)
+            push!(runs, e)
+        end
+        return runs
+    end
+
+    # 1 failed, 8 completed: rung 1 finishes at full capacity (9) with a failure present, but
+    # there's still room to promote from the 8 survivors -- only the per-rung warning fires.
+    partial = rung1_entries(3, 9, 1)
+    logs1, _ = Test.collect_test_logs() do
+        BigHO.on_tell!(s, partial, partial[end])
+    end
+    @test count(l -> l.level == Logging.Warn && occursin("completed with at least one failed trial", l.message), logs1) == 1
+    @test count(l -> l.level == Logging.Warn && occursin("stalled", l.message), logs1) == 0
+
+    # Total wipeout: every rung-1 trial fails -- nothing can ever be promoted, so the bracket
+    # stalls short of its full plan (13 = 9+3+1) AND rung 1 itself completed with failures.
+    wiped = rung1_entries(3, 9, 9)
+    logs2, _ = Test.collect_test_logs() do
+        BigHO.on_tell!(s, wiped, wiped[end])
+    end
+    @test count(l -> l.level == Logging.Warn && occursin("bracket 3 stalled at 9/13", l.message), logs2) == 1
+    @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 3 completed with at least one failed trial", l.message), logs2) == 1
+    @test BigHO._bracket_decision(s, 3, wiped) == (:draw, 2) # moves on to bracket 2, doesn't block forever
+
+    # End-to-end through run!, under both Serial and Threaded: same value-keyed failure rule as
+    # Hyperband's own failure test, so both executors reach the identical outcome and every
+    # affected bracket's stall/failure warnings fire, without ever hanging.
+    flaky(r, a) = a > 4 ? NaN : Float64(a) + 1.0 / r
+    for (label, executor) in (("Serial", Serial()), ("Threaded", Threaded(4)))
+        ho = Hyperoptimizer(flaky, (a=Nominal(collect(1:20)),), ASHA(R=27, η=3, r_min=1))
+        logs3, _ = Test.collect_test_logs() do
+            run!(ho; executor=executor, show_progress=false)
+        end
+        @test ho.status == BigHO.Finished # completes despite falling short of the full plan -- never hangs
+        n_failed = count(e -> e.status == BigHO.Failed, ho.runs)
+        @test n_failed == 32
+        @test length(ho.runs) == 52 # short of ho.n=69 -- several brackets stalled below their planned capacity
+        @test length(ho.completed) == length(ho.runs) - n_failed
+        @test count(l -> l.level == Logging.Warn && occursin("stalled", l.message), logs3) == 3 # brackets 2,3,4
+        @test count(l -> l.level == Logging.Warn && occursin("completed with at least one failed trial", l.message), logs3) == 4 # brackets 1,2,3,4
+    end
+end
