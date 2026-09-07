@@ -34,7 +34,7 @@ function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=Rand
     all(d -> d isa Domain, cands) ||
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
     params = collect(Symbol, keys(candidates))
-    initialized_sampler = init(sampler, AskContext(cands, 0, n))
+    initialized_sampler = init(sampler, cands, n)
     return Hyperoptimizer(params, cands, initialized_sampler, objective, n,
                            RunEntry[], Int[], 0, Initialized,
                            nothing, ReentrantLock())
@@ -90,11 +90,10 @@ function ask!(ho::Hyperoptimizer)
             throw(ArgumentError("ask!: this Hyperoptimizer already errored and cannot produce new trials -- construct a new Hyperoptimizer to continue"))
         exhausted(ho.sampler, ho) && throw(ArgumentError("Hyperoptimizer's sampler is exhausted: no more candidates available"))
         reached_target(ho) && throw(ArgumentError("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more"))
-        ctx = AskContext(ho.candidates, length(ho.runs), ho.n)
-        raw = ho.sampler(ctx)
+        raw = ho.sampler(ho.candidates, ho.runs)
         id = length(ho.runs) + 1
         params = NamedTuple{Tuple(ho.params)}(Tuple(raw)) # e.g. (a = 1.5, b = true) -- labeled everywhere, not just in warnings
-        entry = RunEntry(id, params)
+        entry = create_run_entry(ho.sampler, ho, id, params)
         push!(ho.runs, entry)
         ho.n_pending += 1
         return entry

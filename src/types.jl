@@ -77,15 +77,3 @@ Define your own method on your own wrapper type for custom behavior.
 """
 call_objective(f, params, pre_artefact) = ObjectiveOutcome(f(params...), nothing)
 call_objective(s::Stateful, params, pre_artefact) = ObjectiveOutcome(s.f(params...; pre_artefact)...)
-
-"""
-    AskContext(candidates, n_asked, n)
-
-Read-only context handed to a sampler on `ask!`. `n_asked` is trials asked
-so far; `n` is the planned total, if any.
-"""
-struct AskContext
-    candidates::Tuple
-    n_asked::Int
-    n::Union{Int,Nothing}
-end

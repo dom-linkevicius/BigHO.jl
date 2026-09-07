@@ -9,10 +9,11 @@ end
 
 RandomSampler() = RandomSampler(StableRNG(1))
 
-function (s::RandomSampler)(ctx::AskContext)
-    return [rand(s.rng, d) for d in ctx.candidates]
+function (s::RandomSampler)(candidates, runs)
+    return [rand(s.rng, d) for d in candidates]
 end
 
 on_tell!(::RandomSampler, entry) = nothing
-init(s::RandomSampler, ctx) = s
+init(s::RandomSampler, candidates, n) = s
 exhausted(::RandomSampler, ho) = false
+create_run_entry(::RandomSampler, ho, id, params) = RunEntry(id, params)
