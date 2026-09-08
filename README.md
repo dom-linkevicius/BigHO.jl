@@ -24,12 +24,48 @@ BigHO.jl provides some convenience functionality, such as
 - saving results after each `k` trials in a user specified directory, such that after unexpected crashes and failures it would be possible to easily resume an optimization run
 - conversion of a hyperparameter optimization results into a `DataFrames.DataFrame` for easier downstream analysis
 - summary plotting (via a `CairoMakie` extension), showing scatter plots of the objective value against each hyperparameter (with marginal histograms), the objective value over trial id, and the best value found so far over trial id
-- `Stateful` optimization functions, which allow continuation of training in samplers such as `Hyperband` or `ASHA`, amortizing some of the optimization costs
+- `Stateful` optimization functions, which allow continuation of training from a previous state in samplers such as `Hyperband` or `ASHA`, amortizing some of the optimization costs
+
+## Sample code
+
+```julia
+using BigHO
+using DataFrames: DataFrame
+using Random
+
+# A resource-parameterized objective: bigger `r` means more noisy samples averaged
+# together, so the estimate sharpens as more resource is spent. Wrapped in `Stateful`,
+# so a trial promoted to a higher `r` only pays for the *extra* samples, continuing
+# from `pre_artefact` instead of restarting from scratch.
+function noisy_bowl(r, x, y; pre_artefact=nothing)
+    x > 4.5 && error("simulated failure for x > 4.5 -- BigHO marks this a Failed trial and keeps going")
+    n_done, total = pre_artefact === nothing ? (0, 0.0) : pre_artefact
+    n_new = r - n_done
+    total += sum((x - 3)^2 + (y + 1)^2 + 0.5randn() for _ in 1:n_new)
+    n_done += n_new
+    return total / n_done, (n_done, total)
+end
+
+candidates = (x=Continuous(-5.0, 5.0, 0.1), y=Continuous(-5.0, 5.0, 0.1))
+ho = Hyperoptimizer(Stateful(noisy_bowl), candidates, Hyperband(R=27))
+
+# save_path/save_every checkpoint the run every 10 trials told -- after a crash, resume with
+# `ho = load_hyperoptimizer(Stateful(noisy_bowl), "ho_checkpoint.jld2")`, then `run!` again.
+run!(ho; executor=Threaded(), save_every=10, save_path="ho_checkpoint.jld2")
+
+printmin(ho)     # best trial found so far
+DataFrame(ho)    # every trial (including any Failed ones), with its parameters and value
+
+using CairoMakie, AlgebraOfGraphics  # summaryplot needs both loaded to activate the extension
+summaryplot(ho)
+```
+
+![Sample summaryplot output](docs/sample_summaryplot.png)
 
 ## Internal benchmarking
 
 
 ## Provenance
 
-BigHO.jl started as a fork of, and was inspired by, [Hyperopt.jl](https://github.com/baggepinnen/Hyperopt.jl), but has since been rewritten essentially from the ground up to address some of the perceived limitations of that package.
-This package was written with significant assistance of Claude Code, using Sonnet 5 (Ultracode - xhigh + workflows).
+- BigHO.jl started as a fork of, and was inspired by, [Hyperopt.jl](https://github.com/baggepinnen/Hyperopt.jl), but has since been rewritten essentially from the ground up to address some of the perceived limitations of that package.
+- This package was written with significant assistance of Claude Code, using Sonnet 5 (Ultracode - xhigh + workflows).
