@@ -1,5 +1,7 @@
 # BigHO
 
+[![codecov](https://codecov.io/gh/dom-linkevicius/BigHO.jl/graph/badge.svg)](https://codecov.io/gh/dom-linkevicius/BigHO.jl)
+
 ## Introduction
 
 BigHO.jl is a hyperparameter optimization library meant to be used in situation where individual function evaluations are costly. The package implements executors (which control how individual functions are evaluated) and samplers (how are the hyperparameters sampled), allowing for different composition of executors and samplers, depending on the optimization problem and available resources. The package is still under development and some of the features or implementations may change.
