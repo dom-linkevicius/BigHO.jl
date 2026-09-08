@@ -11,6 +11,8 @@ function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, inner::Sampl
     η > 1 || throw(ArgumentError("η must be greater than 1, got $η"))
     r_min > 0 || throw(ArgumentError("r_min must be positive, got $r_min"))
     r_min <= R || throw(ArgumentError("r_min must be <= R, got r_min=$r_min, R=$R"))
+    Sync || !(inner isa TPEWithFallback) ||
+        throw(ArgumentError("TPEWithFallback isn't supported with ASHA -- untested against its async promotion rule"))
     r_top = r_min * η^_smax(R, r_min, η)
     r_top == R ||
         @warn "SuccessiveHalving: the top resource level reached is $r_top, short of the requested R=$R -- smax=⌊log_η(R/r_min)⌋ floors to the nearest integer, so the schedule only lands exactly on R when R/r_min is an exact power of η"

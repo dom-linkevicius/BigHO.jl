@@ -3,6 +3,7 @@ module BigHO
 export Hyperoptimizer, run!, settarget!
 export Stateful
 export RandomSampler, LHSampler, get_lhs_optim_history
+export TPEWithFallback
 export Hyperband, ASHA
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
@@ -14,7 +15,7 @@ using Random
 using Printf
 using Distributed
 using StableRNGs: StableRNG
-using StatsBase: Weights, sample
+using StatsBase: Weights, sample, std
 import JLD2
 import ProgressMeter
 import DataFrames
@@ -26,6 +27,7 @@ include("types.jl")
 include("samplers/sampler.jl")
 include("samplers/random.jl")
 include("samplers/lhs.jl")
+include("samplers/tpe_with_fallback.jl")
 include("samplers/sha_based/sh.jl")
 include("samplers/sha_based/hyperband.jl")
 include("samplers/sha_based/asha.jl")
