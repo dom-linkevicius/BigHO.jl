@@ -6,7 +6,6 @@ author = ["Domas Linkevicius"]
 [deps]
 DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
 Distributed = "8ba89e20-285c-5b6f-9357-94700520ee1b"
-Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
 LatinHypercubeSampling = "a5e1c1ea-c99a-51d3-a14d-a9a37257b02d"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
@@ -33,11 +32,10 @@ CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 BigHOMakieExt = ["CairoMakie", "AlgebraOfGraphics"]
 
 [compat]
-AlgebraOfGraphics = "=0.10.9"
-CairoMakie = "=0.13.10"
-DataFrames = "1.8.2"
-Distributions = "0.24, 0.25"
-JLD2 = "=0.5.15"
+AlgebraOfGraphics = "=0.10"
+CairoMakie = "=0.13"
+DataFrames = "1.7"
+JLD2 = "=0.5"
 LatinHypercubeSampling = "1.2"
 MacroTools = "0.5"
 MultiKDE = "0.1"
