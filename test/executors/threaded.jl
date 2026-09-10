@@ -25,10 +25,10 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     BigHO.start!(ex, nothing)
     @test BigHO.capacity(ex) == 2
     entry1 = BigHO.RunEntry(1, (a=1,))
-    BigHO.submit!(ex, entry1, a -> a)
+    BigHO.submit!(ex, entry1, p -> p.a)
     @test BigHO.capacity(ex) == 1
     entry2 = BigHO.RunEntry(2, (a=2,))
-    BigHO.submit!(ex, entry2, a -> a)
+    BigHO.submit!(ex, entry2, p -> p.a)
     @test BigHO.capacity(ex) == 0
     # poll isn't guaranteed to drain both in one call -- call again, like run! does in a loop.
     out = BigHO.poll(ex)
@@ -75,14 +75,14 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     @test_throws TaskFailedException BigHO.shutdown!(ex_task_failure)
 
     # Every trial told exactly once, correctly attributed, regardless of completion order under real concurrency.
-    ho = Hyperoptimizer(a -> a^2, (a=Continuous(1, 500, 1),); n=500)
+    ho = Hyperoptimizer(p -> p.a^2, (a=Continuous(1, 500, 1),); n=500)
     run!(ho; executor=Threaded(8))
     @test length(ho.runs) == 500
     @test all(e -> e.status == BigHO.Completed, ho.runs) # none lost/left Pending
     @test all(e -> e.value == e.params.a^2, ho.runs) # each outcome attributed to the right entry
 
     # An exception thrown inside a spawned task is caught and recorded as Failed, not left to crash the run.
-    ho_err = Hyperoptimizer(a -> a == 2 ? error("boom") : a, (a=Nominal([1, 2, 3]),); n=3)
+    ho_err = Hyperoptimizer(p -> p.a == 2 ? error("boom") : p.a, (a=Nominal([1, 2, 3]),); n=3)
     ex_err = Threaded(3)
     @test_logs (:warn, r"non-Real") run!(ho_err; executor=ex_err)
     @test length(results(ho_err)) == 2
@@ -91,7 +91,7 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
 
     # An interrupt inside a spawned task must not deadlock poll() -- run! rethrows it with valid partial results.
     let n_calls = Ref(0)
-        global interrupt_after_first_threaded(a) = (n_calls[] += 1; n_calls[] == 1 ? a : throw(InterruptException()))
+        global interrupt_after_first_threaded(p) = (n_calls[] += 1; n_calls[] == 1 ? p.a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first_threaded, (a=Nominal([1, 2, 3]),); n=3)
     @test_throws InterruptException run!(ho_interrupt; executor=Threaded(1))
@@ -102,7 +102,7 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     @test_throws ArgumentError run!(ho_interrupt) # an Errored optimizer can never be resumed
 
     # Regression: a bug in the Sampler's ask! call must propagate like an interrupt, abandoning any trial still in flight.
-    ho_errored = Hyperoptimizer(a -> a == 1 ? 1.0 : (sleep(2.0); 2.0), (a=Nominal([1, 2, 3]),);
+    ho_errored = Hyperoptimizer(p -> p.a == 1 ? 1.0 : (sleep(2.0); 2.0), (a=Nominal([1, 2, 3]),);
                                  sampler=BuggySampler(), n=3)
     # Checks the message, not just the type -- a prior bug raised the wrong ErrorException here.
     run_errored_exception = nothing
@@ -124,7 +124,7 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     @test_throws ArgumentError BigHO.tell!(ho_errored, ho_errored.runs[2], 42) # even for its own abandoned entry
 
     # Correctness: enough oversampling to find the true optimum regardless of RNG state.
-    g(a, b) = (a - 7)^2 + (b - 3)^2
+    g(p) = (p.a - 7)^2 + (p.b - 3)^2
     ho_exact = Hyperoptimizer(g, (a=Ordinal(0:10), b=Ordinal(0:10)); n=6000)
     run!(ho_exact; executor=Threaded(8))
     @test minimum(ho_exact) == 0

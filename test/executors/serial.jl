@@ -8,7 +8,7 @@
     BigHO.start!(ex, nothing)
     @test BigHO.capacity(ex) == 1
     entry = BigHO.RunEntry(1, (a=1,))
-    BigHO.submit!(ex, entry, a -> a)
+    BigHO.submit!(ex, entry, p -> p.a)
     @test BigHO.capacity(ex) == 0 # one already-completed result waiting to be polled
     out = BigHO.poll(ex)
     @test length(out) == 1
@@ -23,7 +23,7 @@
     # trial itself is abandoned (never told an outcome), not left permanently
     # Pending.
     let n_calls = Ref(0)
-        global interrupt_after_first(a) = (n_calls[] += 1; n_calls[] == 1 ? a : throw(InterruptException()))
+        global interrupt_after_first(p) = (n_calls[] += 1; n_calls[] == 1 ? p.a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first, (a=Nominal([1, 2, 3]),); n=3)
     @test_throws InterruptException run!(ho_interrupt)
@@ -45,7 +45,7 @@
     # Correctness: enough trials relative to the grid size (~500x oversampling
     # per candidate) to find the true optimum with overwhelming probability
     # regardless of RNG state, without depending on exact draw-position luck.
-    g(a, b) = (a - 7)^2 + (b - 3)^2
+    g(p) = (p.a - 7)^2 + (p.b - 3)^2
     ho_exact = Hyperoptimizer(g, (a=Ordinal(0:10), b=Ordinal(0:10)); n=6000)
     run!(ho_exact; executor=Serial())
     @test minimum(ho_exact) == 0
