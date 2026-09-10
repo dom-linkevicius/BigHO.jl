@@ -5,7 +5,7 @@
     # returns NaN is marked Failed (not Completed), warns, and is excluded
     # from history/results -- it never wins minimum/minimizer.
     let n_calls = Ref(0)
-        global nan_after_first(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a * b : NaN)
+        global nan_after_first(p) = (n_calls[] += 1; n_calls[] == 1 ? p.a * p.b : NaN)
     end
     ho_nan = Hyperoptimizer(nan_after_first, (a=Nominal([20]), b=Nominal([1])); n=2)
     @test_logs (:warn, r"NaN") run!(ho_nan)
@@ -22,7 +22,7 @@
     # A thrown exception behaves the same way: Failed, warns showing what was
     # thrown, excluded from history/results.
     let n_calls = Ref(0)
-        global throws_after_first(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a * b : error("boom"))
+        global throws_after_first(p) = (n_calls[] += 1; n_calls[] == 1 ? p.a * p.b : error("boom"))
     end
     ho_err = Hyperoptimizer(throws_after_first, (a=Nominal([20]), b=Nominal([1])); n=2)
     @test_logs (:warn, r"non-Real") run!(ho_err)
@@ -37,7 +37,7 @@
 
     # A run where every trial fails has no completed trial at all -- the
     # optimum accessors throw rather than returning a sentinel.
-    ho_allnan = Hyperoptimizer((a) -> NaN, (a=Nominal([1]),); n=1)
+    ho_allnan = Hyperoptimizer(p -> NaN, (a=Nominal([1]),); n=1)
     @test_logs (:warn, r"NaN") run!(ho_allnan)
     @test length(results(ho_allnan)) == 0
     @test_throws ErrorException minimum(ho_allnan)
@@ -48,7 +48,7 @@
     # itself -- `@test_logs` above only checks the message text, so capture
     # the fully rendered log output here to confirm the params really show up.
     let n_calls = Ref(0)
-        global nan_with_distinctive_params(a, b) = (n_calls[] += 1; n_calls[] == 1 ? a + b : NaN)
+        global nan_with_distinctive_params(p) = (n_calls[] += 1; n_calls[] == 1 ? p.a + p.b : NaN)
     end
     ho_params = Hyperoptimizer(nan_with_distinctive_params, (a=Nominal([777]), b=Nominal([888])); n=2)
     io = IOBuffer()

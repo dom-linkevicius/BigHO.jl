@@ -35,15 +35,16 @@ using BigHO
 using DataFrames: DataFrame
 using Random
 
-# A resource-parameterized objective: bigger `r` means more noisy samples averaged
-# together, so the estimate sharpens as more resource is spent. Wrapped in `Stateful`,
-# so a trial promoted to a higher `r` only pays for the *extra* samples, continuing
-# from `pre_artefact` instead of restarting from scratch.
-function noisy_bowl(r, x, y; pre_artefact=nothing)
-    x > 4.5 && error("simulated failure for x > 4.5 -- BigHO marks this a Failed trial and keeps going")
+# The objective receives all hyperparameters as one NamedTuple `p` -- the sampler's
+# resource level is `p.r`. Bigger `p.r` means more noisy samples averaged together, so the
+# estimate sharpens as more resource is spent. Wrapped in `Stateful`, so a trial promoted to
+# a higher `p.r` only pays for the *extra* samples, continuing from `pre_artefact` instead of
+# restarting from scratch.
+function noisy_bowl(p; pre_artefact=nothing)
+    p.x > 4.5 && error("simulated failure for x > 4.5 -- BigHO marks this a Failed trial and keeps going")
     n_done, total = pre_artefact === nothing ? (0, 0.0) : pre_artefact
-    n_new = r - n_done
-    total += sum((x - 3)^2 + (y + 1)^2 + 0.5randn() for _ in 1:n_new)
+    n_new = p.r - n_done
+    total += sum((p.x - 3)^2 + (p.y + 1)^2 + 0.5randn() for _ in 1:n_new)
     n_done += n_new
     return total / n_done, (n_done, total)
 end

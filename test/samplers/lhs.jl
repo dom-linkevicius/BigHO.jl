@@ -9,7 +9,7 @@
     # LHSampler rejects the latter (arbitrary spacing), see the dedicated test below.
     # Ordinal stays a small, realistic level count -- not a near-continuous sweep,
     # which is what Continuous is for (and LHSampler already exercises separately).
-    ho = Hyperoptimizer((a, b, c) -> f(a, b, c=c),
+    ho = Hyperoptimizer(p -> f(p.a, p.b, c=p.c),
                          (a=Continuous(1, 5, 4 / 99),
                           b=Nominal([true, false]),
                           c=Ordinal([1, 10, 100, 1000])),
@@ -35,37 +35,37 @@
 
     # n is required for a FixedPlanSampler via the plain keyword constructor --
     # use Hyperoptimizer(objective, candidates, sampler; n=...) instead.
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Continuous(1, 10, 1),); sampler=LHSampler(gens=10))
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10, 1),); sampler=LHSampler(gens=10))
 
     # Via the plain keyword constructor (no rebuild), a Continuous domain must
     # still have exactly n values -- only the dedicated constructor rebuilds it.
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Continuous(1, 10, 1),); sampler=LHSampler(gens=10), n=100)
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10, 1),); sampler=LHSampler(gens=10), n=100)
 
     # Continuous(values) (arbitrary spacing) is rejected outright, via either constructor --
     # LHSampler always assumes linear spacing; apply nonlinear transforms in the objective.
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Continuous(exp10.(LinRange(-1, 3, 50))),); sampler=LHSampler(gens=10), n=50)
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Continuous(exp10.(LinRange(-1, 3, 50))),), LHSampler(gens=10); n=50)
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(exp10.(LinRange(-1, 3, 50))),); sampler=LHSampler(gens=10), n=50)
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(exp10.(LinRange(-1, 3, 50))),), LHSampler(gens=10); n=50)
 
     # The dedicated constructor rebuilds a mismatched Continuous(min,max,dt) domain
     # instead of erroring -- see "LHSampler overrides Continuous domains" for the warning.
-    ho_rebuilt = Hyperoptimizer(a -> a, (a=Continuous(1, 10, 1),), LHSampler(gens=50); n=100)
+    ho_rebuilt = Hyperoptimizer(p -> p.a, (a=Continuous(1, 10, 1),), LHSampler(gens=50); n=100)
     @test length(ho_rebuilt.candidates[1].values) == 100
 
     # Nominal/Ordinal domains are exempt from the n-length requirement -- a small,
     # fixed set of named levels (e.g. "low"/"medium"/"high") over many more trials.
-    ho_nominal = Hyperoptimizer((a, b) -> a + b, (a=Continuous(1, 50, 1), b=Nominal([1, 2, 3])); sampler=LHSampler(gens=50), n=50)
+    ho_nominal = Hyperoptimizer(p -> p.a + p.b, (a=Continuous(1, 50, 1), b=Nominal([1, 2, 3])); sampler=LHSampler(gens=50), n=50)
     run!(ho_nominal)
     @test length(results(ho_nominal)) == 50
 
-    ho_ordinal = Hyperoptimizer((a, b) -> a + length(b), (a=Continuous(1, 50, 1), b=Ordinal(["low", "medium", "high"])); sampler=LHSampler(gens=50), n=50)
+    ho_ordinal = Hyperoptimizer(p -> p.a + length(p.b), (a=Continuous(1, 50, 1), b=Ordinal(["low", "medium", "high"])); sampler=LHSampler(gens=50), n=50)
     run!(ho_ordinal)
     @test length(results(ho_ordinal)) == 50
 
     # weights aren't supported -- LHC is a deterministic space-filling design, not a weighted draw.
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Continuous(1, 10, 1; weights=fill(0.1, 10)),); sampler=LHSampler(gens=10), n=10)
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10, 1; weights=fill(0.1, 10)),); sampler=LHSampler(gens=10), n=10)
 
     # gens is a pure optimization-quality knob -- any positive value must still produce a full, valid design.
-    ho_gens = Hyperoptimizer(a -> a, (a=Continuous(1, 20, 1),); sampler=LHSampler(gens=5), n=20)
+    ho_gens = Hyperoptimizer(p -> p.a, (a=Continuous(1, 20, 1),); sampler=LHSampler(gens=5), n=20)
     run!(ho_gens)
     @test sort([h[1] for h in history(ho_gens)]) == sort(collect(ho_gens.candidates[1].values))
 
@@ -78,7 +78,7 @@
     @test issorted(hist)
 
     # Only defined for a Hyperoptimizer actually using LHSampler.
-    ho_random = Hyperoptimizer(a -> a, (a=Nominal([1, 2, 3]),); n=3)
+    ho_random = Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),); n=3)
     @test_throws ArgumentError get_lhs_optim_history(ho_random)
 end
 
@@ -88,13 +88,13 @@ end
     # The dedicated constructor rebuilds a Continuous(min,max,dt) domain to exactly n
     # linearly-spaced values, warning about it -- deterministic (unlike the GA's own outcome).
     @test_logs (:warn, r"overriding `a`.*10 linearly-spaced values") match_mode = :any begin
-        ho = Hyperoptimizer(a -> a, (a=Continuous(1, 5, 1),), LHSampler(gens=20); n=10)
+        ho = Hyperoptimizer(p -> p.a, (a=Continuous(1, 5, 1),), LHSampler(gens=20); n=10)
         @test length(ho.candidates[1].values) == 10
         @test collect(ho.candidates[1].values) == collect(LinRange(1, 5, 10))
     end
 
     # No warning when the domain already matches n -- nothing is actually being overridden.
-    @test_logs min_level = Logging.Warn Hyperoptimizer(a -> a, (a=Continuous(1, 10, 1),), LHSampler(gens=20); n=10)
+    @test_logs min_level = Logging.Warn Hyperoptimizer(p -> p.a, (a=Continuous(1, 10, 1),), LHSampler(gens=20); n=10)
 end
 
 @testset "LHSampler discrete-combination warnings" begin
@@ -103,7 +103,7 @@ end
     # n < the full product of discrete levels: deterministic (doesn't depend on the
     # GA's randomized outcome), so safe to check via an actual construction.
     @test_logs (:warn, r"n \(5\) is less than the number of discrete-variable combinations \(9\)") match_mode = :any begin
-        Hyperoptimizer((a, b) -> 0.0, (a=Nominal(["x", "y", "z"]), b=Nominal([1, 2, 3])); sampler=LHSampler(gens=20), n=5)
+        Hyperoptimizer(p -> 0.0, (a=Nominal(["x", "y", "z"]), b=Nominal([1, 2, 3])); sampler=LHSampler(gens=20), n=5)
     end
 
     # The "design doesn't cover every combination" check depends on the GA's own
@@ -125,7 +125,7 @@ end
     # 1D: LHC visits every one of a single Continuous domain's n values exactly
     # once -- for a single dimension this IS an exhaustive sweep, so the true
     # global optimum is found deterministically, not just with high probability.
-    ho1 = Hyperoptimizer(x -> (x - 37)^2, (x=Continuous(1, 100, 1),), LHSampler(gens=50); n=100)
+    ho1 = Hyperoptimizer(p -> (p.x - 37)^2, (x=Continuous(1, 100, 1),), LHSampler(gens=50); n=100)
     run!(ho1)
     @test minimum(ho1) == 0
     @test minimizer(ho1) == [37]
@@ -135,7 +135,7 @@ end
     # deliberate spread still converges much closer than n=100 random draws
     # would over the same 100x100 grid.
     target = (33.0, 68.0)
-    ho2 = Hyperoptimizer((x, y) -> (x - target[1])^2 + (y - target[2])^2,
+    ho2 = Hyperoptimizer(p -> (p.x - target[1])^2 + (p.y - target[2])^2,
                          (x=Continuous(1, 100, 1), y=Continuous(1, 100, 1)),
                          LHSampler(gens=50); n=100)
     run!(ho2)

@@ -139,7 +139,7 @@ function _train_epochs!(model, opt_state, epochs::Int)
 end
 
 """
-    nn_objective(lr, n_dense_layers, hidden, activation, reg; pre_artefact=nothing)
+    nn_objective(params; pre_artefact=nothing)
         -> (val_loss, (model, nothing, R_MAX, finished_at))
 
 Full-budget (`RANDOM_FULL_EPOCHS[]` epochs) training from scratch -- used (wrapped in
@@ -153,14 +153,14 @@ right as this objective call itself finishes, i.e. from inside the executor that
 ran it) is what gives the wall-clock/regret benchmark real per-trial completion timestamps
 without needing to drive `ask!`/`tell!` manually or add a callback hook to `run!`.
 """
-function nn_objective(lr, n_dense_layers, hidden, activation, reg; pre_artefact=nothing)
-    model, opt_state = _setup(n_dense_layers, hidden, activation, lr, reg)
+function nn_objective(p; pre_artefact=nothing)
+    model, opt_state = _setup(p.n_dense_layers, p.hidden, p.activation, p.lr, p.reg)
     _train_epochs!(model, opt_state, RANDOM_FULL_EPOCHS[])
     return _val_loss(model), (model, nothing, R_MAX, time())
 end
 
 """
-    nn_objective_stateful(r, lr, n_dense_layers, hidden, activation, reg; pre_artefact)
+    nn_objective_stateful(params; pre_artefact)
         -> (val_loss, (model, opt_state, r, finished_at))
 
 Hyperband/ASHA path: a promoted trial resumes training from its own checkpoint
@@ -169,16 +169,16 @@ scratch -- so the next promotion only trains the incremental resource units (eac
 `EPOCHS_PER_RESOURCE` real epochs) needed to reach the new resource level `r`. See
 [`nn_objective`](@ref) for why `finished_at` is captured here.
 """
-function nn_objective_stateful(r, lr, n_dense_layers, hidden, activation, reg; pre_artefact=nothing)
+function nn_objective_stateful(p; pre_artefact=nothing)
     if pre_artefact === nothing
-        model, opt_state = _setup(n_dense_layers, hidden, activation, lr, reg)
-        resource_to_run = r
+        model, opt_state = _setup(p.n_dense_layers, p.hidden, p.activation, p.lr, p.reg)
+        resource_to_run = p.r
     else
         model, opt_state, resource_trained, _ = pre_artefact
-        resource_to_run = r - resource_trained
+        resource_to_run = p.r - resource_trained
     end
     resource_to_run > 0 && _train_epochs!(model, opt_state, round(Int, resource_to_run * EPOCHS_PER_RESOURCE))
-    return _val_loss(model), (model, opt_state, r, time())
+    return _val_loss(model), (model, opt_state, p.r, time())
 end
 
 """
@@ -191,13 +191,13 @@ dispatch machinery for the real ones' argument types), but always trains exactly
 call, so warming up with the real objective would mean every "just 2 trials" warmup call pays
 the full deploy-scale training cost instead of a few seconds.
 """
-function _warmup_objective(lr, n_dense_layers, hidden, activation, reg; pre_artefact=nothing)
-    model, opt_state = _setup(n_dense_layers, hidden, activation, lr, reg)
+function _warmup_objective(p; pre_artefact=nothing)
+    model, opt_state = _setup(p.n_dense_layers, p.hidden, p.activation, p.lr, p.reg)
     _train_epochs!(model, opt_state, 1)
     return _val_loss(model), (model, nothing, 1, time())
 end
-function _warmup_objective_stateful(r, lr, n_dense_layers, hidden, activation, reg; pre_artefact=nothing)
-    model, opt_state = pre_artefact === nothing ? _setup(n_dense_layers, hidden, activation, lr, reg) : pre_artefact[1:2]
+function _warmup_objective_stateful(p; pre_artefact=nothing)
+    model, opt_state = pre_artefact === nothing ? _setup(p.n_dense_layers, p.hidden, p.activation, p.lr, p.reg) : pre_artefact[1:2]
     _train_epochs!(model, opt_state, 1)
-    return _val_loss(model), (model, opt_state, r, time())
+    return _val_loss(model), (model, opt_state, p.r, time())
 end
