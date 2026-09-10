@@ -64,8 +64,9 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHa
     haskey(candidates, :r) &&
         throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
     # `nothing` is exempt: there's no objective to wrap, so the warning would have nothing to act on.
-    objective isa Stateful || objective === nothing ||
-        @warn "$(typeof(sampler)) with a non-Stateful objective: promoted trials can't resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- wrap the objective in `Stateful` to make promotions continue instead of restart"
+    objective isa Stateful || objective === nothing || @warn "$(typeof(sampler)) with a non-Stateful objective: promoted trials can't " *
+                                                             "resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- " *
+                                                             "wrap the objective in `Stateful` to make promotions continue instead of restart"
     haskey(kwargs, :n) &&
         throw(ArgumentError("Hyperoptimizer: $(typeof(sampler))'s trial count is fully determined by R/η/r_min -- don't pass n explicitly"))
     if sampler.inner isa LHSampler
