@@ -8,7 +8,7 @@ export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
 export summaryplot
 export Nominal, Ordinal, Continuous
-export load_hyperoptimizer
+export save_hyperoptimizer, load_hyperoptimizer
 
 using Random
 using Printf

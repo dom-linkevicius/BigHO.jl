@@ -215,14 +215,14 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
                 tell!(ho, entry, outcome)
             end
             if save_every !== nothing && n_told(ho) - last_saved >= save_every
-                _save_checkpoint(ho, save_path)
+                save_hyperoptimizer(ho, save_path)
                 last_saved = n_told(ho)
             end
             progress !== nothing && ProgressMeter.update!(progress, n_told(ho))
             _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
         ho.status = Finished
-        save_path !== nothing && _save_checkpoint(ho, save_path)
+        save_path !== nothing && save_hyperoptimizer(ho, save_path)
     catch e
         _handle_run_error(e, ho)
     finally

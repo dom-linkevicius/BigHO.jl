@@ -16,6 +16,29 @@
     run!(ho_nosave)
     @test length(results(ho_nosave)) == 5
 
+    # save_hyperoptimizer: the same checkpoint, written once outside run! -- the whole point
+    # being that it round-trips through load_hyperoptimizer identically to run!'s own save_path.
+    mktempdir() do dir
+        path = joinpath(dir, "oneoff.jld2")
+        ho_oneoff = Hyperoptimizer(p -> p.a^2, (a=Ordinal(1:10),); n=4)
+        run!(ho_oneoff)
+        save_hyperoptimizer(ho_oneoff, path)
+        @test isfile(path)
+        @test !isfile(path * ".tmp") # atomic rename left nothing behind
+
+        reloaded = load_hyperoptimizer(p -> p.a^2, path)
+        @test length(reloaded.runs) == length(ho_oneoff.runs)
+        @test results(reloaded) == results(ho_oneoff)
+        @test minimum(reloaded) == minimum(ho_oneoff)
+        @test reloaded.status == ho_oneoff.status
+
+        # Works mid-run too, not just on a finished optimizer.
+        ho_partial = Hyperoptimizer(p -> p.a^2, (a=Ordinal(1:10),); n=6)
+        BigHO.ask!(ho_partial)
+        save_hyperoptimizer(ho_partial, path)
+        @test load_hyperoptimizer(p -> p.a^2, path).n_pending == 1
+    end
+
     mktempdir() do dir
         path = joinpath(dir, "checkpoint.jld2")
 
