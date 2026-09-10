@@ -14,7 +14,6 @@ using Random
 using Printf
 using Distributed
 using StableRNGs: StableRNG
-using StatsBase: Weights, sample
 import JLD2
 import ProgressMeter
 import DataFrames

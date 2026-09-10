@@ -1,8 +1,9 @@
 """
     Sampler
 
-Pluggable candidate-generation strategy. Concrete samplers must implement the callable interface `(sampler)(candidates, runs) -> raw_candidates`, plus `on_tell!`, `init`, `exhausted`, `blocked`, and `create_run_entry` -- none have a default, so a missing one is a loud `MethodError`.
+Pluggable candidate-generation strategy. Concrete samplers must implement the callable interface `(sampler)(candidates, runs) -> unit_params`, plus `on_tell!`, `init`, `exhausted`, `blocked`, and `create_run_entry` -- none have a default, so a missing one is a loud `MethodError`.
 `candidates` is `ho.candidates`; `runs` is `ho.runs` (read-only by convention).
+Proposals are `[0,1]` coordinates, one per candidate in `candidates` order, which `ask!` decodes via [`from_unit`](@ref).
 """
 abstract type Sampler end
 
@@ -37,8 +38,8 @@ once more trials are told -- unlike `exhausted`, not permanent.
 function blocked end
 
 """
-    create_run_entry(sampler, ho, id, params) -> RunEntry
+    create_run_entry(sampler, ho, id, params, unit_params) -> RunEntry
 
-Builds the `RunEntry` for a freshly-asked trial. Most samplers just wrap `params` with no `pre_artefact`; samplers resuming from a prior trial's `post_artefact` seed it accordingly instead.
+Builds the `RunEntry` for a freshly-asked trial from the decoded `params` and the proposed `unit_params`. Most samplers just wrap both; ones resuming a prior trial's `post_artefact` seed it here, as does one stamping a reserved param (Hyperband's `:r`).
 """
 function create_run_entry end

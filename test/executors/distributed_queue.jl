@@ -1,17 +1,18 @@
-# Produces candidates 1, 2, 3, ... in order, so a specific trial can be rigged by VALUE rather than by timing.
+# Proposes the stratum centre of level n_calls, so it produces candidates 1, 2, 3, ... in order and
+# a specific trial can be rigged by VALUE rather than by timing.
 mutable struct SequentialSampler <: BigHO.Sampler
     n_calls::Int
 end
 SequentialSampler() = SequentialSampler(0)
 function (s::SequentialSampler)(candidates, runs)
     s.n_calls += 1
-    return [s.n_calls]
+    return [(s.n_calls - 0.5) / length(d) for d in candidates]
 end
 BigHO.init(s::SequentialSampler, candidates, n) = s
 BigHO.exhausted(::SequentialSampler, ho) = false
 BigHO.blocked(::SequentialSampler, ho) = false
 BigHO.on_tell!(::SequentialSampler, runs, entry) = nothing
-BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id, params)
+BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEntry(id, params, unit)
 
 @testset "DistributedQueue executor" begin
     @info "Testing DistributedQueue executor"
@@ -48,10 +49,10 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         ex = DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex, nothing)
         @test BigHO.capacity(ex) == max_concurrency
-        entry1 = BigHO.RunEntry(1, (a=1,))
+        entry1 = BigHO.RunEntry(1, (a=1,), Float64[])
         BigHO.submit!(ex, entry1, dq_square)
         @test BigHO.capacity(ex) == max_concurrency - 1
-        entry2 = BigHO.RunEntry(2, (a=2,))
+        entry2 = BigHO.RunEntry(2, (a=2,), Float64[])
         BigHO.submit!(ex, entry2, dq_square)
         @test BigHO.capacity(ex) == max_concurrency - 2
         out = BigHO.poll(ex)
@@ -64,9 +65,9 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         # Regression: poll() must not discard earlier good results just because a later item is an interrupt.
         ex_batch = DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex_batch, nothing)
-        entryA = BigHO.RunEntry(1, (a=1,))
-        entryB = BigHO.RunEntry(2, (a=2,))
-        entryC = BigHO.RunEntry(3, (a=3,))
+        entryA = BigHO.RunEntry(1, (a=1,), Float64[])
+        entryB = BigHO.RunEntry(2, (a=2,), Float64[])
+        entryC = BigHO.RunEntry(3, (a=3,), Float64[])
         put!(ex_batch.results, (entryA, BigHO.ObjectiveOutcome(10, nothing)))
         put!(ex_batch.results, (entryB, InterruptException()))
         put!(ex_batch.results, (entryC, BigHO.ObjectiveOutcome(30, nothing)))
@@ -87,8 +88,8 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         shutdown_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
         ex_shutdown = DistributedQueue(2; spawn_worker=shutdown_spawn_worker, setup_worker=shutdown_setup_worker)
         BigHO.start!(ex_shutdown, nothing)
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,)), p -> p.a^2) # fast
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(2, (a=2,)), p -> (sleep(30.0); p.a^2)) # slow
+        BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,), Float64[]), p -> p.a^2) # fast
+        BigHO.submit!(ex_shutdown, BigHO.RunEntry(2, (a=2,), Float64[]), p -> (sleep(30.0); p.a^2)) # slow
         sleep(5.0) # generous margin for the fast trial's own spawn+compute+report+teardown to genuinely finish
         elapsed = @elapsed BigHO.shutdown!(ex_shutdown)
         @test elapsed < 10.0 # killed the slow trial rather than waiting out its full 30s sleep
@@ -121,7 +122,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         end
         ex_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=interrupt_setup_worker)
         BigHO.start!(ex_interrupt, nothing)
-        BigHO.submit!(ex_interrupt, BigHO.RunEntry(1, (a=1,)), dq_slow)
+        BigHO.submit!(ex_interrupt, BigHO.RunEntry(1, (a=1,), Float64[]), dq_slow)
         let waited = 0.0
             while !setup_done[] && waited < 60.0
                 sleep(0.1)
@@ -138,7 +139,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         # An InterruptException from the OBJECTIVE (remote) arrives wrapped in a RemoteException, unlike a local one -- treated as an ordinary Failed trial.
         ex_objective_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex_objective_interrupt, nothing)
-        BigHO.submit!(ex_objective_interrupt, BigHO.RunEntry(1, (a=1,)), p -> throw(InterruptException()))
+        BigHO.submit!(ex_objective_interrupt, BigHO.RunEntry(1, (a=1,), Float64[]), p -> throw(InterruptException()))
         out_objective_interrupt = BigHO.poll(ex_objective_interrupt)
         @test length(out_objective_interrupt) == 1
         @test out_objective_interrupt[1][2] isa Exception # an ordinary Failed outcome, not an abort
@@ -166,7 +167,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         ex_death = DistributedQueue(n_death_trials; spawn_worker=death_spawn_worker, setup_worker=death_setup_worker)
         BigHO.start!(ex_death, nothing)
         for i in 1:n_death_trials
-            BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,)), dq_death_or_square)
+            BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,), Float64[]), dq_death_or_square)
         end
         # Watched with a timeout so a "worker dies -> hang" regression fails loudly instead of hanging the suite.
         collected = Tuple{BigHO.RunEntry,Any}[]
@@ -240,7 +241,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         spawn_fail_setup_worker(pid) = error("simulated cluster/remotecall_eval setup failure")
         ex_spawn_fail = DistributedQueue(1; spawn_worker=spawn_fail_spawn_worker, setup_worker=spawn_fail_setup_worker)
         BigHO.start!(ex_spawn_fail, nothing)
-        BigHO.submit!(ex_spawn_fail, BigHO.RunEntry(1, (a=1,)), dq_square)
+        BigHO.submit!(ex_spawn_fail, BigHO.RunEntry(1, (a=1,), Float64[]), dq_square)
         out_spawn_fail = BigHO.poll(ex_spawn_fail)
         @test length(out_spawn_fail) == 1
         @test out_spawn_fail[1][2] isa Exception # an ordinary Failed outcome, not a hang or crash

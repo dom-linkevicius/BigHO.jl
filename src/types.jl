@@ -1,14 +1,16 @@
 @enum RunStatus Pending Completed Failed Abandoned
 
 """
-    RunEntry(id, params::NamedTuple, metadata=Dict{Symbol,Any}(); pre_artefact=nothing)
+    RunEntry(id, params::NamedTuple, unit_params, metadata=Dict{Symbol,Any}(); pre_artefact=nothing)
 
-The complete record of one trial: what was asked (`id`, `params`, `metadata`) and, once told, what happened (`status`, `value`, `error`, `post_artefact`). Immutable -- `ho.runs[id]` is always replaced with a new `RunEntry`, never mutated in place.
+The complete record of one trial: what was asked (`id`, `params`, `unit_params`, `metadata`) and, once told, what happened (`status`, `value`, `error`, `post_artefact`). Immutable -- `ho.runs[id]` is always replaced with a new `RunEntry`, never mutated in place.
+`unit_params` is the `[0,1]^d` coordinate the sampler proposed, kept verbatim (decoding it back out of `params` would be lossy), ordered like `ho.candidates` so it has no entry for a reserved `:r`.
 `value` is `missing` unless `status === Completed`; `error` holds the raw outcome that caused a `Failed` classification (an exception, `NaN`, etc.), `nothing` otherwise. `pre_artefact`/`post_artefact` are `nothing` unless the objective is [`Stateful`](@ref).
 """
 struct RunEntry{P<:NamedTuple}
     id::Int
     params::P
+    unit_params::Vector{Float64}
     metadata::Dict{Symbol,Any}
     status::RunStatus
     value::Any
@@ -16,12 +18,13 @@ struct RunEntry{P<:NamedTuple}
     pre_artefact::Any
     post_artefact::Any
 end
-function RunEntry(id::Int, params::NamedTuple, metadata::Dict{Symbol,Any}=Dict{Symbol,Any}(); pre_artefact=nothing)
-    return RunEntry(id, params, metadata, Pending, missing, nothing, pre_artefact, nothing)
+function RunEntry(id::Int, params::NamedTuple, unit_params::AbstractVector{<:Real},
+                  metadata::Dict{Symbol,Any}=Dict{Symbol,Any}(); pre_artefact=nothing)
+    return RunEntry(id, params, collect(Float64, unit_params), metadata, Pending, missing, nothing, pre_artefact, nothing)
 end
 
 _with_result(entry::RunEntry, status::RunStatus, value, post_artefact; error=nothing) =
-    RunEntry(entry.id, entry.params, entry.metadata, status, value, error, entry.pre_artefact, post_artefact)
+    RunEntry(entry.id, entry.params, entry.unit_params, entry.metadata, status, value, error, entry.pre_artefact, post_artefact)
 
 """
     finalize_entry(entry::RunEntry, outcome) -> RunEntry

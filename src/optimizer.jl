@@ -43,21 +43,19 @@ end
 """
     Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
 
-Construct with `n` (the trial budget) given directly. Every `Continuous(min,max,dt)` domain's grid is rebuilt to exactly `n` linearly-spaced values over its original range, overriding whatever resolution it was originally given; `Continuous(values)` (arbitrary spacing) is rejected -- apply any nonlinear transform (e.g. log-scale) inside the objective instead.
-`Nominal`/`Ordinal` domains are left untouched.
+Construct with `n` (the trial budget) given directly -- [`LHSampler`](@ref) optimizes its design for one fixed trial count, so it can't be inferred later.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
     cands = values(candidates)
     all(d -> d isa Domain, cands) ||
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
-    return Hyperoptimizer(objective, _linearize_for_lhs(candidates, n); sampler=sampler, n=n)
+    return Hyperoptimizer(objective, candidates; sampler=sampler, n=n)
 end
 
 """
     Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
 
-Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's resource levels); throws if `candidates` already has one. `n` is computed automatically -- passing it explicitly throws.
-If `sampler.inner isa LHSampler`, `Continuous` domains are rebuilt to match `inner`'s own draw budget, same as `LHSampler`'s own dedicated constructor.
+Reserves `:r` for the resource level, which the sampler stamps onto every trial's `params` rather than sampling; throws if `candidates` already has an `:r`. `n` is computed automatically -- passing it explicitly throws.
 Warns if `objective` is neither [`Stateful`](@ref) nor `nothing`: promotions then restart from scratch instead of resuming, so every promoted trial re-pays the resource its predecessor already spent.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
@@ -68,13 +66,8 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHa
         @warn "$(typeof(sampler)) with a non-Stateful objective: promoted trials can't resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- wrap the objective in `Stateful` to make promotions continue instead of restart"
     haskey(kwargs, :n) &&
         throw(ArgumentError("Hyperoptimizer: $(typeof(sampler))'s trial count is fully determined by R/η/r_min -- don't pass n explicitly"))
-    if sampler.inner isa LHSampler
-        candidates = _linearize_for_lhs(candidates, _total_draws(sampler.R, sampler.r_min, sampler.η))
-    end
-    r_domain = Ordinal(_resource_levels(sampler.R, sampler.r_min, sampler.η))
-    extended = _add_r(candidates, r_domain)
     n = _total_trials(sampler.R, sampler.r_min, sampler.η)
-    return Hyperoptimizer(objective, extended; sampler=sampler, n=n, kwargs...)
+    return Hyperoptimizer(objective, candidates; sampler=sampler, n=n, kwargs...)
 end
 
 reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
@@ -114,10 +107,13 @@ function ask!(ho::Hyperoptimizer)
             throw(ArgumentError("ask!: this Hyperoptimizer already errored and cannot produce new trials -- construct a new Hyperoptimizer to continue"))
         exhausted(ho.sampler, ho) && throw(ArgumentError("Hyperoptimizer's sampler is exhausted: no more candidates available"))
         reached_target(ho) && throw(ArgumentError("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more"))
-        raw = ho.sampler(ho.candidates, ho.runs)
+        unit_params = ho.sampler(ho.candidates, ho.runs)
+        length(unit_params) == length(ho.candidates) || # otherwise zip below would silently drop dimensions
+            throw(ArgumentError("ask!: $(typeof(ho.sampler)) proposed $(length(unit_params)) unit coordinates for $(length(ho.candidates)) candidates -- a sampler must return one per candidate, in ho.candidates order"))
         id = length(ho.runs) + 1
-        params = NamedTuple{Tuple(ho.params)}(Tuple(raw)) # e.g. (a = 1.5, b = true) -- labeled everywhere, not just in warnings
-        entry = create_run_entry(ho.sampler, ho, id, params)
+        decoded = Tuple(from_unit(d, u) for (d, u) in zip(ho.candidates, unit_params))
+        params = NamedTuple{Tuple(ho.params)}(decoded) # e.g. (a = 1.5, b = true) -- labeled everywhere, not just in warnings
+        entry = create_run_entry(ho.sampler, ho, id, params, unit_params)
         push!(ho.runs, entry)
         ho.n_pending += 1
         return entry

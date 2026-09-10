@@ -2,7 +2,7 @@
     Hyperband(; R, η=3, r_min=1, inner=RandomSampler())
 
 Original Hyperband (Li et al. 2018): one finite pass over `smax=⌊log_η(R/r_min)⌋+1` brackets of decreasing aggressiveness, promoting the top `1/η` of a rung once it's fully told. A [`FixedPlanSampler`](@ref) -- `n` is computed automatically, not resumable via `settarget!`.
-Construct via `Hyperoptimizer(objective, candidates, Hyperband(...))`, which prepends reserved `:r` (`Ordinal` over `r_min,...,R`); objective called as `f(params)` with the resource level in `params.r` (or `f(params; pre_artefact)` if [`Stateful`](@ref)).
+Construct via `Hyperoptimizer(objective, candidates, Hyperband(...))`, which reserves `:r`; objective called as `f(params)` with the resource level stamped into `params.r` (or `f(params; pre_artefact)` if [`Stateful`](@ref)).
 """
 const Hyperband = SuccessiveHalving{true}
 

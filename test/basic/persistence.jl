@@ -83,12 +83,12 @@
         path = joinpath(dir, "checkpoint.jld2")
 
         # The actual point of save_path/load_hyperoptimizer: a finished run can be reloaded and genuinely resumed past its original target via settarget!.
-        # n starts too small to find the true optimum; settarget! raises it enough that the resumed run reliably does.
+        # n starts far below what's needed to reliably find the optimum; settarget! raises it enough that the resumed run does.
+        # Whether the first 5 draws happen to hit it is pure seed luck, so it isn't asserted -- what matters is that the resumed run continues from them.
         g(p) = (p.a - 7)^2
         ho = Hyperoptimizer(g, (a=Ordinal(0:10),); n=5)
         run!(ho; executor=Serial(), save_path=path)
         @test length(ho.runs) == 5
-        @test minimum(ho) > 0 # too few trials yet to have hit the true optimum
 
         loaded = load_hyperoptimizer(g, path)
         @test loaded.n == 5

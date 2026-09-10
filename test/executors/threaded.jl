@@ -1,4 +1,5 @@
 # Throws on its 3rd call, to exercise an exception from ask! rather than the objective.
+# Proposes the stratum centre of level n_calls, so the nth draw is deterministically the nth level.
 mutable struct BuggySampler <: BigHO.Sampler
     n_calls::Int
 end
@@ -6,13 +7,13 @@ BuggySampler() = BuggySampler(0)
 function (s::BuggySampler)(candidates, runs)
     s.n_calls += 1
     s.n_calls == 3 && error("sampler bug")
-    return [s.n_calls]
+    return [(s.n_calls - 0.5) / length(d) for d in candidates]
 end
 BigHO.init(s::BuggySampler, candidates, n) = s
 BigHO.exhausted(::BuggySampler, ho) = false
 BigHO.blocked(::BuggySampler, ho) = false
 BigHO.on_tell!(::BuggySampler, runs, entry) = nothing
-BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, params)
+BigHO.create_run_entry(::BuggySampler, ho, id, params, unit) = BigHO.RunEntry(id, params, unit)
 
 @testset "Threaded executor" begin
     @info "Testing Threaded executor"
@@ -24,10 +25,10 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     ex = Threaded(2)
     BigHO.start!(ex, nothing)
     @test BigHO.capacity(ex) == 2
-    entry1 = BigHO.RunEntry(1, (a=1,))
+    entry1 = BigHO.RunEntry(1, (a=1,), Float64[])
     BigHO.submit!(ex, entry1, p -> p.a)
     @test BigHO.capacity(ex) == 1
-    entry2 = BigHO.RunEntry(2, (a=2,))
+    entry2 = BigHO.RunEntry(2, (a=2,), Float64[])
     BigHO.submit!(ex, entry2, p -> p.a)
     @test BigHO.capacity(ex) == 0
     # poll isn't guaranteed to drain both in one call -- call again, like run! does in a loop.
@@ -41,9 +42,9 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     # Regression: poll() must not discard earlier good results just because a later item is an interrupt.
     ex_batch = Threaded(4)
     BigHO.start!(ex_batch, nothing)
-    entryA = BigHO.RunEntry(1, (a=1,))
-    entryB = BigHO.RunEntry(2, (a=2,))
-    entryC = BigHO.RunEntry(3, (a=3,))
+    entryA = BigHO.RunEntry(1, (a=1,), Float64[])
+    entryB = BigHO.RunEntry(2, (a=2,), Float64[])
+    entryC = BigHO.RunEntry(3, (a=3,), Float64[])
     put!(ex_batch.results, (entryA, BigHO.ObjectiveOutcome(10, nothing)))
     put!(ex_batch.results, (entryB, InterruptException()))
     put!(ex_batch.results, (entryC, BigHO.ObjectiveOutcome(30, nothing)))
@@ -58,7 +59,7 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     ex_shutdown = Threaded(4)
     BigHO.start!(ex_shutdown, nothing)
     finished = Ref(false)
-    BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,)), _ -> (sleep(0.3); finished[] = true; 1))
+    BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,), Float64[]), _ -> (sleep(0.3); finished[] = true; 1))
     BigHO.shutdown!(ex_shutdown)
     @test finished[]
 
@@ -75,7 +76,7 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params) = BigHO.RunEntry(id, para
     @test_throws TaskFailedException BigHO.shutdown!(ex_task_failure)
 
     # Every trial told exactly once, correctly attributed, regardless of completion order under real concurrency.
-    ho = Hyperoptimizer(p -> p.a^2, (a=Continuous(1, 500, 1),); n=500)
+    ho = Hyperoptimizer(p -> p.a^2, (a=Continuous(1, 500),); n=500)
     run!(ho; executor=Threaded(8))
     @test length(ho.runs) == 500
     @test all(e -> e.status == BigHO.Completed, ho.runs) # none lost/left Pending
