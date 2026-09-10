@@ -24,7 +24,7 @@ end
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
 
 Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref) per parameter name; `n` bounds the total trials.
-`objective` is called as `objective(params...)`, unless wrapped in [`Stateful`](@ref); only ever minimizes.
+`objective` is called as `objective(params)` with the whole `NamedTuple`, unless wrapped in [`Stateful`](@ref); only ever minimizes.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
@@ -58,10 +58,15 @@ end
 
 Prepends a reserved `:r` candidate (an `Ordinal` over the sampler's resource levels); throws if `candidates` already has one. `n` is computed automatically -- passing it explicitly throws.
 If `sampler.inner isa LHSampler`, `Continuous` domains are rebuilt to match `inner`'s own draw budget, same as `LHSampler`'s own dedicated constructor.
+Warns if `objective` is neither [`Stateful`](@ref) nor `nothing`: promotions then restart from scratch instead of resuming, so every promoted trial re-pays the resource its predecessor already spent.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
     haskey(candidates, :r) &&
         throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
+    # `nothing` is exempt: there's no objective to wrap, so the warning would have nothing to act on.
+    objective isa Stateful || objective === nothing || @warn "$(typeof(sampler)) with a non-Stateful objective: promoted trials can't " *
+                                                             "resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- " *
+                                                             "wrap the objective in `Stateful` to make promotions continue instead of restart"
     haskey(kwargs, :n) &&
         throw(ArgumentError("Hyperoptimizer: $(typeof(sampler))'s trial count is fully determined by R/η/r_min -- don't pass n explicitly"))
     if sampler.inner isa LHSampler
@@ -211,14 +216,14 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
                 tell!(ho, entry, outcome)
             end
             if save_every !== nothing && n_told(ho) - last_saved >= save_every
-                _save_checkpoint(ho, save_path)
+                save_hyperoptimizer(ho, save_path)
                 last_saved = n_told(ho)
             end
             progress !== nothing && ProgressMeter.update!(progress, n_told(ho))
             _should_stop_asking(ho) && ho.n_pending == 0 && break
         end
         ho.status = Finished
-        save_path !== nothing && _save_checkpoint(ho, save_path)
+        save_path !== nothing && save_hyperoptimizer(ho, save_path)
     catch e
         _handle_run_error(e, ho)
     finally

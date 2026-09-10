@@ -17,7 +17,7 @@ end
 @testset "Hyperband/ASHA construction and basic run" begin
     @info "Testing Hyperband/ASHA construction and basic run"
 
-    toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+    toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
 
     for (name, sampler) in (("Hyperband", Hyperband(R=81, η=3, r_min=1)), ("ASHA", ASHA(R=81, η=3, r_min=1)))
         ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
@@ -53,10 +53,10 @@ end
     # Completed trial's post_artefact -- never dangling, never pointing forward in time.
     for sampler in (Hyperband(R=27, η=3, r_min=1), ASHA(R=27, η=3, r_min=1))
         call_id = Ref(0)
-        function stateful_obj(r, a, b; pre_artefact=nothing)
+        function stateful_obj(p; pre_artefact=nothing)
             call_id[] += 1
             resumed_from = pre_artefact === nothing ? nothing : pre_artefact[1]
-            loss = a + 0.001 * b
+            loss = p.a + 0.001 * p.b
             return loss, (call_id[], resumed_from)
         end
 
@@ -79,19 +79,34 @@ end
     end
 end
 
+@testset "Hyperband/ASHA warn on non-Stateful objective" begin
+    @info "Testing Hyperband/ASHA warn when the objective can't resume from a previous trial's state"
+
+    # Without Stateful there's no pre_artefact to resume from, so every promotion redoes the
+    # resource its predecessor already spent -- worth a warning, since nothing else surfaces it.
+    for sampler in (Hyperband(R=9, η=3, r_min=1), ASHA(R=9, η=3, r_min=1))
+        @test_logs (:warn, r"non-Stateful") match_mode = :any Hyperoptimizer(p -> p.a, (a=Nominal([1]),), sampler)
+        # Stateful is the intended usage -- it must stay silent.
+        @test_logs min_level = Logging.Warn Hyperoptimizer(Stateful((p; pre_artefact=nothing) -> (p.a, nothing)),
+                                                            (a=Nominal([1]),), sampler)
+        # So must a `nothing` objective -- there's nothing to wrap in Stateful.
+        @test_logs min_level = Logging.Warn Hyperoptimizer(nothing, (a=Nominal([1]),), sampler)
+    end
+end
+
 @testset "Hyperband/ASHA reserved :r, explicit n, and failure handling" begin
     @info "Testing Hyperband/ASHA reserved :r name, explicit-n rejection, and NaN/failure exclusion"
 
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), Hyperband(R=9, η=3, r_min=1))
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1))
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (r=Nominal([1]), a=Nominal([1])), Hyperband(R=9, η=3, r_min=1))
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1))
 
     # n is fully determined by R/η/r_min -- passing it explicitly is rejected, not silently ignored.
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
-    @test_throws ArgumentError Hyperoptimizer(a -> a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
 
     # A trial that fails must never corrupt rung bookkeeping for the ones that succeed.
     n_calls = Ref(0)
-    global hb_flaky(r, a) = (n_calls[] += 1; n_calls[] % 5 == 0 ? NaN : a + 1.0 / r)
+    global hb_flaky(p) = (n_calls[] += 1; n_calls[] % 5 == 0 ? NaN : p.a + 1.0 / p.r)
     for sampler in (Hyperband(R=9, η=3, r_min=1), ASHA(R=9, η=3, r_min=1))
         n_calls[] = 0
         ho = Hyperoptimizer(hb_flaky, (a=Nominal([1, 2, 3, 4, 5]),), sampler)
@@ -107,7 +122,7 @@ end
 
     for sampler in (Hyperband(R=9, η=3, r_min=1), ASHA(R=9, η=3, r_min=1))
         @test sampler isa BigHO.FixedPlanSampler
-        ho = Hyperoptimizer((r, a) -> a, (a=Nominal([1, 2, 3]),), sampler)
+        ho = Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),), sampler)
         run!(ho; show_progress=false)
         @test ho.status == BigHO.Finished
         @test_throws ArgumentError settarget!(ho, ho.n + 10)
@@ -117,7 +132,7 @@ end
 @testset "Hyperband/ASHA under Threaded executor" begin
     @info "Testing Hyperband/ASHA under the Threaded executor (cross-bracket promotion correctness under real concurrency)"
 
-    toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+    toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
 
     for sampler in (Hyperband(R=81, η=3, r_min=1), ASHA(R=81, η=3, r_min=1))
         ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
@@ -135,13 +150,13 @@ end
 
     # n is small: DistributedQueue pays a real process-spawn cost per trial.
     @everywhere using BigHO
-    @everywhere sh_dq_toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+    @everywhere sh_dq_toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
 
     sh_dq_spawn_worker() = first(addprocs(1))
     function sh_dq_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
             using BigHO
-            sh_dq_toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+            sh_dq_toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
         end))
         return nothing
     end
@@ -206,7 +221,7 @@ end
     # End-to-end through run!, under both Serial and Threaded: failures depend only on the
     # candidate value (never on dispatch order or timing), so both executors reach the exact
     # same outcome -- and neither hangs despite one bracket falling short of its full plan.
-    flaky(r, a) = a > 4 ? NaN : Float64(a) + 1.0 / r
+    flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
     for (label, executor) in (("Serial", Serial()), ("Threaded", Threaded(4)))
         ho = Hyperoptimizer(flaky, (a=Nominal(collect(1:20)),), Hyperband(R=27, η=3, r_min=1))
         logs3, _ = Test.collect_test_logs() do
@@ -224,7 +239,7 @@ end
 @testset "Hyperband/ASHA with LHSampler inner" begin
     @info "Testing Hyperband/ASHA with LHSampler as inner (fresh draws via LHS instead of RandomSampler)"
 
-    toy(r, a, b) = (a - 3.0)^2 + (b - 1.0)^2 + 1.0 / r
+    toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
 
     for sampler in (Hyperband(R=27, η=3, r_min=1; inner=LHSampler(gens=5)), ASHA(R=27, η=3, r_min=1; inner=LHSampler(gens=5)))
         ho = Hyperoptimizer(toy, (a=Continuous(0, 10, 0.1), b=Continuous(0, 5, 0.1)), sampler)
@@ -274,7 +289,7 @@ end
     # End-to-end through run!, under both Serial and Threaded: same value-keyed failure rule as
     # Hyperband's own failure test, so both executors reach the identical outcome and every
     # affected bracket's stall/failure warnings fire, without ever hanging.
-    flaky(r, a) = a > 4 ? NaN : Float64(a) + 1.0 / r
+    flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
     for (label, executor) in (("Serial", Serial()), ("Threaded", Threaded(4)))
         ho = Hyperoptimizer(flaky, (a=Nominal(collect(1:20)),), ASHA(R=27, η=3, r_min=1))
         logs3, _ = Test.collect_test_logs() do

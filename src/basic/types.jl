@@ -61,7 +61,8 @@ end
 
 Wrap an objective that needs `pre_artefact`/`post_artefact` threading (see
 [`RunEntry`](@ref)), e.g. `Stateful(train_network)`. `f` is called as
-`f(params...; pre_artefact)` and must return `(metric, post_artefact)`.
+`f(params; pre_artefact)` -- `params` is the whole `NamedTuple`, not splatted --
+and must return `(metric, post_artefact)`.
 """
 struct Stateful{F}
     f::F
@@ -71,9 +72,11 @@ end
     call_objective(f, params, pre_artefact)
 
 Invoke an objective, returning an [`ObjectiveOutcome`](@ref) on normal
-completion. Dispatches on `f`'s type: a plain objective is called as
-`f(params...)`; a [`Stateful`](@ref) one threads `pre_artefact` through.
+completion. `params` is passed whole as a `NamedTuple` (never splatted), so an
+objective's signature doesn't have to track the candidate count or order.
+Dispatches on `f`'s type: a plain objective is called as `f(params)`; a
+[`Stateful`](@ref) one threads `pre_artefact` through.
 Define your own method on your own wrapper type for custom behavior.
 """
-call_objective(f, params, pre_artefact) = ObjectiveOutcome(f(params...), nothing)
-call_objective(s::Stateful, params, pre_artefact) = ObjectiveOutcome(s.f(params...; pre_artefact)...)
+call_objective(f, params, pre_artefact) = ObjectiveOutcome(f(params), nothing)
+call_objective(s::Stateful, params, pre_artefact) = ObjectiveOutcome(s.f(params; pre_artefact)...)

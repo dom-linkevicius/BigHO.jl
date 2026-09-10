@@ -4,16 +4,16 @@
     # The SAME setup, run through all three executors, must reach the identical final result.
     # n is small: DistributedQueue pays a real process-spawn cost per trial.
     @everywhere using BigHO
-    @everywhere dq_eq(a, b) = (a - 7)^2 + (b - 3)^2
-    @everywhere dq_eq_h(a) = a == 5 ? error("boom") : a
+    @everywhere dq_eq(p) = (p.a - 7)^2 + (p.b - 3)^2
+    @everywhere dq_eq_h(p) = p.a == 5 ? error("boom") : p.a
 
     # spawn_worker just creates the process; setup_worker loads BigHO + this file's test functions onto it.
     test_spawn_worker() = first(addprocs(1))
     function test_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
             using BigHO
-            dq_eq(a, b) = (a - 7)^2 + (b - 3)^2
-            dq_eq_h(a) = a == 5 ? error("boom") : a
+            dq_eq(p) = (p.a - 7)^2 + (p.b - 3)^2
+            dq_eq_h(p) = p.a == 5 ? error("boom") : p.a
         end))
         return nothing
     end

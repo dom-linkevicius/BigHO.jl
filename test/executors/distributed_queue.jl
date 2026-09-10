@@ -33,14 +33,14 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
     function test_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
             using BigHO
-            dq_square(a) = a^2
-            dq_slow(a) = (sleep(0.5); a^2)
+            dq_square(p) = p.a^2
+            dq_slow(p) = (sleep(0.5); p.a^2)
         end))
         return nothing
     end
     @everywhere using BigHO
-    @everywhere dq_square(a) = a^2
-    @everywhere dq_slow(a) = (sleep(0.5); a^2)
+    @everywhere dq_square(p) = p.a^2
+    @everywhere dq_slow(p) = (sleep(0.5); p.a^2)
 
     max_concurrency = 3
     try
@@ -87,8 +87,8 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         shutdown_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
         ex_shutdown = DistributedQueue(2; spawn_worker=shutdown_spawn_worker, setup_worker=shutdown_setup_worker)
         BigHO.start!(ex_shutdown, nothing)
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,)), a -> a^2) # fast
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(2, (a=2,)), a -> (sleep(30.0); a^2)) # slow
+        BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,)), p -> p.a^2) # fast
+        BigHO.submit!(ex_shutdown, BigHO.RunEntry(2, (a=2,)), p -> (sleep(30.0); p.a^2)) # slow
         sleep(5.0) # generous margin for the fast trial's own spawn+compute+report+teardown to genuinely finish
         elapsed = @elapsed BigHO.shutdown!(ex_shutdown)
         @test elapsed < 10.0 # killed the slow trial rather than waiting out its full 30s sleep
@@ -138,7 +138,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
         # An InterruptException from the OBJECTIVE (remote) arrives wrapped in a RemoteException, unlike a local one -- treated as an ordinary Failed trial.
         ex_objective_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex_objective_interrupt, nothing)
-        BigHO.submit!(ex_objective_interrupt, BigHO.RunEntry(1, (a=1,)), a -> throw(InterruptException()))
+        BigHO.submit!(ex_objective_interrupt, BigHO.RunEntry(1, (a=1,)), p -> throw(InterruptException()))
         out_objective_interrupt = BigHO.poll(ex_objective_interrupt)
         @test length(out_objective_interrupt) == 1
         @test out_objective_interrupt[1][2] isa Exception # an ordinary Failed outcome, not an abort
@@ -162,7 +162,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
             return pid
         end
         death_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
-        dq_death_or_square = a -> a == dying_id ? exit() : a^2
+        dq_death_or_square = p -> p.a == dying_id ? exit() : p.a^2
         ex_death = DistributedQueue(n_death_trials; spawn_worker=death_spawn_worker, setup_worker=death_setup_worker)
         BigHO.start!(ex_death, nothing)
         for i in 1:n_death_trials
@@ -202,7 +202,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params) = BigHO.RunEntry(id,
             return pid
         end
         interrupt_others_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
-        dq_interrupt_others = a -> (sleep(30.0); a^2) # generous margin -- Windows CI's slower process spawn eats into it
+        dq_interrupt_others = p -> (sleep(30.0); p.a^2) # generous margin -- Windows CI's slower process spawn eats into it
         ex_interrupt_others = DistributedQueue(3; spawn_worker=interrupt_others_spawn_worker, setup_worker=interrupt_others_setup_worker)
         ho_dq_interrupt = Hyperoptimizer(dq_interrupt_others, (a=Nominal([1, 2, 3]),);
                                           sampler=SequentialSampler(), n=3)

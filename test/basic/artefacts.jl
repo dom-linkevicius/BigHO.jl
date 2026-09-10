@@ -2,9 +2,9 @@ mutable struct FakeNetwork
     weight::Float64
 end
 
-function train_step(lr, momentum; pre_artefact=nothing)
+function train_step(p; pre_artefact=nothing)
     net = pre_artefact === nothing ? FakeNetwork(0.0) : pre_artefact
-    net.weight += lr * momentum
+    net.weight += p.lr * p.momentum
     loss = abs(net.weight - 1.0)
     return loss, net # (metric, post_artefact)
 end
@@ -13,14 +13,14 @@ struct LoggingWrapper{F}
     f::F
     log::Vector{Any}
 end
-BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pre_artefact); w.f(params...))
+BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pre_artefact); w.f(params))
 
 @testset "Stateful objectives / artefacts" begin
     @info "Testing Stateful objective artefact threading"
 
     # Plain (non-Stateful) objectives: pre_artefact/post_artefact are always
     # nothing -- the common case, requiring no special handling anywhere.
-    ho_plain = Hyperoptimizer((a, b) -> a + b, (a=Nominal([1, 2]), b=Nominal([3, 4])); n=3)
+    ho_plain = Hyperoptimizer(p -> p.a + p.b, (a=Nominal([1, 2]), b=Nominal([3, 4])); n=3)
     run!(ho_plain)
     @test all(e -> e.pre_artefact === nothing, ho_plain.runs)
     @test all(e -> e.post_artefact === nothing, ho_plain.runs)
@@ -41,11 +41,11 @@ BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pr
     # handled identically to a plain objective's -- via the same finalize_entry
     # dispatch, since by the time it's caught the outcome is just a plain
     # value or exception either way.
-    ho_nan = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> (NaN, "unused")), (a=Nominal([1]),); n=1)
+    ho_nan = Hyperoptimizer(Stateful((p; pre_artefact=nothing) -> (NaN, "unused")), (a=Nominal([1]),); n=1)
     @test_logs (:warn, r"NaN") run!(ho_nan)
     @test length(results(ho_nan)) == 0
 
-    ho_err = Hyperoptimizer(Stateful((a; pre_artefact=nothing) -> error("boom")), (a=Nominal([1]),); n=1)
+    ho_err = Hyperoptimizer(Stateful((p; pre_artefact=nothing) -> error("boom")), (a=Nominal([1]),); n=1)
     @test_logs (:warn, r"non-Real") run!(ho_err)
     @test length(results(ho_err)) == 0
 
@@ -54,7 +54,7 @@ BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pr
     # confirms the extension point is genuinely open, not special-cased to
     # Stateful internally.
     log = Any[]
-    ho_custom = Hyperoptimizer(LoggingWrapper((a, b) -> a + b, log), (a=Nominal([1]), b=Nominal([2])); n=1)
+    ho_custom = Hyperoptimizer(LoggingWrapper(p -> p.a + p.b, log), (a=Nominal([1]), b=Nominal([2])); n=1)
     run!(ho_custom)
     @test log == [nothing]
     @test minimum(ho_custom) == 3
@@ -67,7 +67,7 @@ BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pr
     # actually returned. Since only a Real is a valid Completed outcome,
     # this non-Real tuple is correctly marked Failed instead, the same as
     # any other non-Real return -- not silently split, coerced, or ranked.
-    ho_tuple = Hyperoptimizer((a, b) -> (a + b, "diagnostic"), (a=Nominal([1]), b=Nominal([2])); n=1)
+    ho_tuple = Hyperoptimizer(p -> (p.a + p.b, "diagnostic"), (a=Nominal([1]), b=Nominal([2])); n=1)
     @test_logs (:warn, r"non-Real") run!(ho_tuple)
     @test length(results(ho_tuple)) == 0
     @test ho_tuple.runs[1].status == BigHO.Failed
@@ -77,7 +77,7 @@ BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pr
     # failed (same treatment as NaN/exceptions), rather than being recorded
     # as a Completed value that later corrupts ranking comparisons.
     let n_calls = Ref(0)
-        global missing_after_first(a) = (n_calls[] += 1; n_calls[] == 1 ? 5.0 : missing)
+        global missing_after_first(p) = (n_calls[] += 1; n_calls[] == 1 ? 5.0 : missing)
     end
     ho_missing = Hyperoptimizer(missing_after_first, (a=Nominal([1, 2]),); n=2)
     @test_logs (:warn, r"non-Real") run!(ho_missing)

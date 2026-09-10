@@ -1,14 +1,14 @@
 @testset "summaryplot" begin
     @info "Testing summaryplot(ho)"
 
-    ho = Hyperoptimizer((a, b) -> (a - 3)^2 + (b - 1)^2,
+    ho = Hyperoptimizer(p -> (p.a - 3)^2 + (p.b - 1)^2,
                          (a=Continuous(0, 10, 0.1), b=Nominal([1, 2, 3, 4, 5])); n=20)
     run!(ho; show_progress=false)
     fig = summaryplot(ho)
     @test fig isa CairoMakie.Figure
 
     # A single-parameter Hyperoptimizer still works -- one marginal-scatter row.
-    ho_single = Hyperoptimizer(a -> a^2, (a=Nominal([1, 2, 3]),); n=3)
+    ho_single = Hyperoptimizer(p -> p.a^2, (a=Nominal([1, 2, 3]),); n=3)
     run!(ho_single; show_progress=false)
     @test summaryplot(ho_single) isa CairoMakie.Figure
 
