@@ -67,8 +67,25 @@ summaryplot(ho)
 
 ## Internal benchmarking
 
+To check that the samplers and executors actually deliver what they promise, the repo benchmarks them against each other on a small MLP trained on the Titanic dataset (via `MLDatasets.jl`), minimizing validation loss over five hyperparameters: learning rate, number of dense layers, hidden width, activation, and L2 regularization strength.
+
+The comparison is set up as "same budget, who gets there first":
+- `Hyperband` and `ASHA` run their own one-pass bracket schedule (`R=1215`, `η=3`, `r_min=5`, giving 6 brackets), where one resource unit is 6 training epochs -- so a bottom-rung trial trains for 30 epochs and a top-rung one for 7290.
+- That schedule tries 415 distinct hyperparameter configurations and spends ~205k epochs in total, so `RandomSampler` is given exactly the same: 415 trials, with its per-trial epoch count set so its total matches. Neither sampler gets more compute than the other -- only the choice of how to spend it differs.
+- Every (sampler, executor) combination is repeated 10 times; the figure shows the median and interquartile range across those repeats.
+
+"Regret" is a run's best-validation-loss-so-far minus the best loss seen across every run in the benchmark, since the true optimum of this problem isn't known analytically.
+
+![Wall-clock regret comparison](docs/benchmarks/wallclock_regret_comparison.png)
+
+What the figure shows:
+- `Hyperband` and `ASHA` reach any given regret level substantially sooner than `RandomSampler` at equal total budget, in both executors. Cheap early rungs let them discard bad configurations before paying full price for them, which is the entire point of successive halving.
+- `Threaded` completes the same work several times faster than `Serial` (the published run used 32 threads): ~8x for `RandomSampler` (257s → 32s per repeat), ~3.7x for `ASHA` (274s → 75s) and ~2.9x for `Hyperband` (267s → 92s). `RandomSampler` parallelizes best simply because all of its trials are independent, whereas the successive-halving samplers have to resolve rungs before they can promote -- and `ASHA` beats `Hyperband` here precisely because it doesn't wait for a whole rung to finish first.
+- All three converge to a similar final regret, which is expected: the advantage of successive halving is how quickly it gets to a good configuration, not a better ceiling.
+
+You can find the benchmarking code in [`benchmarks/`](benchmarks/). The `LHSampler` was not included because under the current implementation it requires a large number of genetic algorithm generations to distribute the points well, and without them it behaves very similarly to a `RandomSampler`.
 
 ## Provenance
 
 - BigHO.jl started as a fork of, and was inspired by, [Hyperopt.jl](https://github.com/baggepinnen/Hyperopt.jl), but has since been rewritten essentially from the ground up to address some of the perceived limitations of that package.
-- This package was written with significant assistance of Claude Code, using Sonnet 5 (Ultracode - xhigh + workflows).
+- This package was written with significant assistance of Claude Code.
