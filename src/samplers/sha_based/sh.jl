@@ -72,11 +72,11 @@ function create_run_entry(s::SuccessiveHalving, ho, id, params, unit_params)
     action = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)
     if action[1] === :draw
         k = action[2]
-        stamped = _add_r(params, _resource(s.R, s.r_min, s.η, k, 1))
-        return RunEntry(id, stamped, unit_params, Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
+        with_r = _add_r(params, _resource(s.R, s.r_min, s.η, k, 1))
+        return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
     end
     k, i, promoted_id = action[2], action[3], action[4]
-    stamped = _add_r(params, _resource(s.R, s.r_min, s.η, k, i + 1))
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, k, i + 1))
     metadata = Dict{Symbol,Any}(:rung => i + 1, :bracket_k => k, :promoted_from => promoted_id)
-    return RunEntry(id, stamped, unit_params, metadata; pre_artefact=ho.runs[promoted_id].post_artefact)
+    return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[promoted_id].post_artefact)
 end

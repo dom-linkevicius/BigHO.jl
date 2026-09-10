@@ -11,11 +11,11 @@ _log(msg) = (println(msg); flush(stdout))
 const RESULTS_PATH = joinpath(@__DIR__, "results.jld2")
 
 const CANDIDATES = (
-    lr=Continuous(1e-3, 5e-2, 1e-3),
+    lr=Continuous(1e-3, 5e-2),
     n_dense_layers=Ordinal([1, 2, 3]),
     hidden=Ordinal([8, 16, 32, 64]),
     activation=Nominal([tanh, relu]),
-    reg=Continuous(0.0, 1e-2, 1e-3),
+    reg=Continuous(0.0, 1e-2),
 )
 
 const ETA = 3            # Hyperband/ASHA η (R comes from nn_objective.jl's R_MAX)
