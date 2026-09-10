@@ -3,7 +3,7 @@ module BigHO
 export Hyperoptimizer, run!, settarget!
 export Stateful
 export RandomSampler, LHSampler
-export Hyperband, ASHA
+export Hyperband, ASHA, DEHB, DEHBSampler
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
 export summaryplot
@@ -34,6 +34,7 @@ const BasicSamplers = Union{LHSampler,RandomSampler}
 include("samplers/sha_based/sh.jl")
 include("samplers/sha_based/synchronous.jl")
 include("samplers/sha_based/asynchronous.jl")
+include("samplers/sha_based/dehb_sync.jl")
 """
     FixedPlanSampler
 """
