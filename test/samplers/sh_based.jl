@@ -257,7 +257,7 @@ end
 
     toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
 
-    for sampler in (Hyperband(R=27, η=3, r_min=1; inner=LHSampler(gens=5)), ASHA(R=27, η=3, r_min=1; inner=LHSampler(gens=5)))
+    for sampler in (Hyperband(R=27, η=3, r_min=1; inner=LHSampler()), ASHA(R=27, η=3, r_min=1; inner=LHSampler()))
         ho = Hyperoptimizer(toy, (a=Continuous(0, 10), b=Continuous(0, 5)), sampler)
         run!(ho; show_progress=false)
         @test ho.n == length(ho.runs)

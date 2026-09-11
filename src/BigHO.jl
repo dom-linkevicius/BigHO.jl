@@ -2,7 +2,7 @@ module BigHO
 
 export Hyperoptimizer, run!, settarget!
 export Stateful
-export RandomSampler, LHSampler, get_lhs_optim_history
+export RandomSampler, LHSampler
 export Hyperband, ASHA
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
@@ -17,7 +17,7 @@ using StableRNGs: StableRNG
 import JLD2
 import ProgressMeter
 import DataFrames
-import LatinHypercubeSampling
+import QuasiMonteCarlo
 
 include("basic/domains.jl")
 include("basic/types.jl")
