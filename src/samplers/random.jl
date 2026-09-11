@@ -1,7 +1,5 @@
 """
     RandomSampler(rng=StableRNG(1))
-
-Draw each parameter uniformly, as a uniform `[0,1]` coordinate per candidate. Default `rng` set to `StableRNG(1)`
 """
 struct RandomSampler{T<:Random.AbstractRNG} <: Sampler
     rng::T

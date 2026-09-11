@@ -3,9 +3,8 @@ using JLD2
 
 include("nn_objective.jl")
 
-# @info is buffered (often for minutes) when stdout/stderr are redirected to a file, e.g. the
-# CI workflow's log -- println+flush prints immediately, so progress is visible while a long
-# deploy-scale run is still in progress, not just after it exits.
+# @info is buffered when stdout is redirected to a file (the CI log), so a long run shows nothing
+# until it exits -- println+flush prints immediately.
 _log(msg) = (println(msg); flush(stdout))
 
 const RESULTS_PATH = joinpath(@__DIR__, "results.jld2")
@@ -20,25 +19,13 @@ const CANDIDATES = (
 
 const ETA = 3            # Hyperband/ASHA η (R comes from nn_objective.jl's R_MAX)
 
-# nn_objective.jl's DEPLOY flag also gates these -- one full trial now costs seconds (a real
-# MLP on Titanic), not milliseconds, so trial/repeat counts must shrink for local dev
-# iteration and grow deliberately for the real published (CI) run. See BIGHO_BENCHMARK_DEPLOY.
-# BIGHO_BENCHMARK_REPEATS overrides the repeat count directly -- e.g. a single deploy-scale
-# repeat to sanity-check params/results before committing to the full REGRET_REPEATS sweep.
-# Random's trial budget -- matched to Hyperband/ASHA's own count of unique hyperparameter
-# configurations actually tried (BigHO._total_draws counts only fresh rung-1 draws, not
-# promotions/continuations of an already-drawn config to a higher resource level; _total_trials
-# counts every dispatch including those, which is a different, larger number). For a clean
-# "same number of configs tried, does total training budget matter" comparison.
+# _total_draws counts fresh rung-1 draws only (not promotions), so Random tries the same number of
+# distinct configs as Hyperband/ASHA. BIGHO_BENCHMARK_REPEATS overrides the repeat count directly.
 const N_TRIALS = DEPLOY ? BigHO._total_draws(R_MAX, R_MIN, ETA) : 4
 const REGRET_REPEATS = parse(Int, get(ENV, "BIGHO_BENCHMARK_REPEATS", DEPLOY ? "10" : "2"))
 
-# Match Random's full-trial epoch count to Hyperband/ASHA's actual total training
-# budget (from their real bracket schedule -- capacity at each rung times the INCREMENTAL
-# resource over the previous rung, since warm-started promotions never re-pay earlier epochs),
-# divided evenly across N_TRIALS trials. Without this, changing EPOCHS_PER_RESOURCE, R_MAX, or
-# N_TRIALS independently would silently change how the two total budgets compare -- this keeps
-# "same total compute, which sampler does better" meaningful regardless of those tunings.
+# Give Random the same total epoch budget as the bracket schedule: capacity per rung times the
+# INCREMENTAL resource, since warm-started promotions never re-pay earlier epochs.
 if DEPLOY
     smax = BigHO._smax(R_MAX, R_MIN, ETA)
     total_resource_units = sum(
@@ -57,8 +44,8 @@ const SH_OBJ = Stateful(nn_objective_stateful)
 const SAMPLER_NAMES = ("Random", "Hyperband", "ASHA")
 const EXECUTORS = (Serial=Serial(), Threaded=Threaded())
 
-const SHA_INNER = RandomSampler()   # Hyperband/ASHA's inner per-draw sampler -- named here (rather
-# than relying on the constructors' own default) so its name can be recorded in metadata for the plot legend.
+# Named rather than left to the constructors' default so it can be recorded in metadata for the legend.
+const SHA_INNER = RandomSampler()
 
 const MAKE_HYPEROPTIMIZER = Dict(
     "Random" => () -> Hyperoptimizer(PLAIN_OBJ, CANDIDATES; sampler=RandomSampler(), n=N_TRIALS),
@@ -66,13 +53,8 @@ const MAKE_HYPEROPTIMIZER = Dict(
     "ASHA" => () -> Hyperoptimizer(SH_OBJ, CANDIDATES, ASHA(R=R_MAX, η=ETA, r_min=R_MIN, inner=SHA_INNER)),
 )
 
-# Absorb Julia's one-time JIT compilation cost (Flux, BigHO's run!/executors/Hyperband/ASHA
-# dispatch) up front -- otherwise whichever executor/sampler happens to run first in the
-# real, timed comparisons below would unfairly carry that one-time cost, not a genuine
-# per-trial speed difference. Uses the dedicated 1-epoch warmup objectives, NOT PLAIN_OBJ/
-# SH_OBJ -- nn_objective's epoch count is baked in (R_MAX * EPOCHS_PER_RESOURCE), so warming
-# up with the real objective would mean every "just 2 trials" call pays the full deploy-scale
-# training cost instead of a few seconds.
+# Absorb JIT cost up front, or whichever executor runs first carries it. Uses the 1-epoch warmup
+# objectives -- the real ones have their epoch count baked in and would cost full deploy scale.
 _log("Warming up (JIT compilation)...")
 const WARMUP_OBJ = Stateful(_warmup_objective)
 const WARMUP_SH_OBJ = Stateful(_warmup_objective_stateful)
@@ -85,7 +67,9 @@ end
 
 _finished_at(entry) = entry.post_artefact[4]
 
-"one repeat's (elapsed_time_since_run_start, value) pairs, sorted by actual completion time"
+"""
+    _timed_results(ho, t0)
+"""
 function _timed_results(ho::Hyperoptimizer, t0::Float64)
     completed = filter(e -> !ismissing(e.value), ho.runs)
     pairs = [(_finished_at(e) - t0, e.value) for e in completed]
@@ -98,12 +82,8 @@ function _running_min_curve(pairs)
     return times, best
 end
 
-# ---- wall-clock regret comparison (BOHB paper, Fig. 1 style) ----
-# Every sampler runs under BOTH executors here: Serial and Threaded. Repeated REGRET_REPEATS
-# times per (sampler, executor) pair to average out run-to-run noise. Only ever saves the
-# per-repeat (times, best-so-far) curves -- never the trained models themselves (large,
-# closure-laden Flux objects not worth persisting) -- to `results.jld2`, so `plot_results.jl`
-# can be re-run (and edited) without repeating this expensive training.
+# Wall-clock regret comparison (BOHB paper, Fig. 1 style): every sampler under both executors,
+# REGRET_REPEATS times each. Saves only the (times, best-so-far) curves, never the trained models.
 function collect_results()
     runs = Dict((name, ex) => Tuple{Vector{Float64},Vector{Float64}}[] for name in SAMPLER_NAMES, ex in keys(EXECUTORS))
     total_combos = REGRET_REPEATS * length(EXECUTORS) * length(SAMPLER_NAMES)

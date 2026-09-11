@@ -1,8 +1,5 @@
 """
     OptimizerStatus
-
-A [`Hyperoptimizer`](@ref)'s lifecycle: `Initialized`, `Running`, `Finished` (resumable via `settarget!`+`run!`), or `Errored` (permanent).
-`Errored` covers any exception escaping `run!`'s orchestration -- in-flight trials abandoned, the exception rethrown to the caller.
 """
 @enum OptimizerStatus Initialized Running Errored Finished
 
@@ -22,9 +19,6 @@ end
 
 """
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
-
-Construct a hyperparameter optimizer. `candidates` gives one [`Domain`](@ref) per parameter name; `n` bounds the total trials.
-`objective` is called as `objective(params)` with the whole `NamedTuple`, unless wrapped in [`Stateful`](@ref); only ever minimizes.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
     n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
@@ -42,8 +36,6 @@ end
 
 """
     Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
-
-Construct with `n` (the trial budget) given directly -- [`LHSampler`](@ref) optimizes its design for one fixed trial count, so it can't be inferred later.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
     cands = values(candidates)
@@ -54,9 +46,6 @@ end
 
 """
     Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
-
-Reserves `:r` for the resource level, which the sampler stamps onto every trial's `params` rather than sampling; throws if `candidates` already has an `:r`. `n` is computed automatically -- passing it explicitly throws.
-Warns if `objective` is neither [`Stateful`](@ref) nor `nothing`: promotions then restart from scratch instead of resuming, so every promoted trial re-pays the resource its predecessor already spent.
 """
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving; kwargs...)
     haskey(candidates, :r) &&
@@ -78,9 +67,6 @@ n_told(ho::Hyperoptimizer) = length(ho.runs) - ho.n_pending
 
 """
     settarget!(ho, n)
-
-Raise the planned total number of trials to `n` -- how you resume a run.
-Throws if lowering, if `ho.status` is `Errored`, or the sampler has a fixed plan; warns if trials are still pending.
 """
 function settarget!(ho::Hyperoptimizer, n::Int)
     ho.status == Errored &&
@@ -98,9 +84,6 @@ end
 
 """
     ask!(ho) -> RunEntry
-
-Draw the next candidate from `ho.sampler` and register a `Pending` [`RunEntry`](@ref).
-Throws if the sampler is exhausted, `ho.n` is already reached, or `ho.status` is `Errored`.
 """
 function ask!(ho::Hyperoptimizer)
     lock(ho.lock) do
@@ -131,9 +114,6 @@ end
 
 """
     tell!(ho, entry, outcome)
-
-Record `outcome` for `entry` via [`finalize_entry`](@ref), updating the cached optimum.
-Throws if `ho.status` is `Errored` (every `Pending` entry was already abandoned).
 """
 function tell!(ho::Hyperoptimizer, entry::RunEntry, outcome)
     lock(ho.lock) do
@@ -153,17 +133,6 @@ end
 
 """
     run!(ho; executor=Serial(), save_every=nothing, save_path=nothing, show_progress=true)
-
-Drive `ho` to completion, dispatching evaluations through `executor`.
-Any exception escaping `run!`'s own orchestration (not the objective) is rethrown and sets `ho.status = Errored` (see [`OptimizerStatus`](@ref)).
-To resume, call `settarget!(ho, n)` then `run!` again; throws if already `Errored`.
-
-`save_path`, if given, checkpoints `ho` there every `save_every` trials told, overwriting the same file (minus the objective -- see [`load_hyperoptimizer`](@ref)); a final checkpoint always runs when the run ends normally too, even if `save_every` was given.
-`save_every` requires `save_path`; `save_path` requires a real `ho.objective`. Writes are atomic (temp file renamed over `save_path`).
-Not saved if `run!` errors -- only the periodic `save_every` checkpoints, if any, capture an unfinished run.
-
-`show_progress` (on by default) shows a `ProgressMeter` bar tracking trials told against `ho.n`, which must be set for it (pass `show_progress=false` to run without a target).
-The bar always finishes, even on error, so a partially-drawn one is never left in the terminal.
 """
 _should_stop_asking(ho::Hyperoptimizer) = reached_target(ho) || exhausted(ho.sampler, ho) || blocked(ho.sampler, ho)
 

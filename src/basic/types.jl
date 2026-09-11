@@ -2,10 +2,6 @@
 
 """
     RunEntry(id, params::NamedTuple, unit_params, metadata=Dict{Symbol,Any}(); pre_artefact=nothing)
-
-The complete record of one trial: what was asked (`id`, `params`, `unit_params`, `metadata`) and, once told, what happened (`status`, `value`, `error`, `post_artefact`). Immutable -- `ho.runs[id]` is always replaced with a new `RunEntry`, never mutated in place.
-`unit_params` is the `[0,1]^d` coordinate the sampler proposed, kept verbatim (decoding it back out of `params` would be lossy), ordered like `ho.candidates` so it has no entry for a reserved `:r`.
-`value` is `missing` unless `status === Completed`; `error` holds the raw outcome that caused a `Failed` classification (an exception, `NaN`, etc.), `nothing` otherwise. `pre_artefact`/`post_artefact` are `nothing` unless the objective is [`Stateful`](@ref).
 """
 struct RunEntry{P<:NamedTuple}
     id::Int
@@ -28,8 +24,6 @@ _with_result(entry::RunEntry, status::RunStatus, value, post_artefact; error=not
 
 """
     finalize_entry(entry::RunEntry, outcome) -> RunEntry
-
-Classify a raw objective outcome into a new `RunEntry`. Only a non-`NaN` `Real` becomes `Completed` -- `NaN`, `missing`, a thrown exception, or any other type all become `Failed`, with `.error` set to `outcome` (and a `@warn` at the time).
 """
 function finalize_entry(entry::RunEntry, outcome::Real)
     if isnan(outcome)
@@ -45,10 +39,6 @@ end
 
 """
     ObjectiveOutcome(value, post_artefact)
-
-Uniform wrapper [`call_objective`](@ref) returns on normal completion, so
-[`finalize_entry`](@ref) can dispatch on this type rather than guess from
-the shape of whatever the objective returned.
 """
 struct ObjectiveOutcome
     value::Any
@@ -61,11 +51,6 @@ end
 
 """
     Stateful(f)
-
-Wrap an objective that needs `pre_artefact`/`post_artefact` threading (see
-[`RunEntry`](@ref)), e.g. `Stateful(train_network)`. `f` is called as
-`f(params; pre_artefact)` -- `params` is the whole `NamedTuple`, not splatted --
-and must return `(metric, post_artefact)`.
 """
 struct Stateful{F}
     f::F
@@ -73,13 +58,6 @@ end
 
 """
     call_objective(f, params, pre_artefact)
-
-Invoke an objective, returning an [`ObjectiveOutcome`](@ref) on normal
-completion. `params` is passed whole as a `NamedTuple` (never splatted), so an
-objective's signature doesn't have to track the candidate count or order.
-Dispatches on `f`'s type: a plain objective is called as `f(params)`; a
-[`Stateful`](@ref) one threads `pre_artefact` through.
-Define your own method on your own wrapper type for custom behavior.
 """
 call_objective(f, params, pre_artefact) = ObjectiveOutcome(f(params), nothing)
 call_objective(s::Stateful, params, pre_artefact) = ObjectiveOutcome(s.f(params; pre_artefact)...)

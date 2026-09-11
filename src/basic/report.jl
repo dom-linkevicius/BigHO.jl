@@ -1,15 +1,10 @@
 """
     history(ho) -> Vector
-
-The params of every `Completed` trial, in `tell!` order.
 """
 history(ho::Hyperoptimizer) = [ho.runs[i].params for i in ho.completed]
 
 """
     results(ho) -> Vector
-
-The objective value of every `Completed` trial, aligned index-for-index
-with `history(ho)`.
 """
 results(ho::Hyperoptimizer) = [ho.runs[i].value for i in ho.completed]
 
@@ -17,8 +12,6 @@ _no_completed_runs_error(fname) = error("$fname is undefined: this Hyperoptimize
 
 """
     minimum(ho)
-
-The smallest recorded objective value. Throws if no trial has completed yet.
 """
 function Base.minimum(ho::Hyperoptimizer)
     ho.best_min_id === nothing && _no_completed_runs_error("minimum")
@@ -27,9 +20,6 @@ end
 
 """
     minimizer(ho)
-
-The params of the trial that achieved `minimum(ho)`. Throws if no trial has
-completed yet.
 """
 function minimizer(ho::Hyperoptimizer)
     ho.best_min_id === nothing && _no_completed_runs_error("minimizer")
@@ -75,8 +65,6 @@ _print_value(io::IO, v) = @printf(io, "%9s ", v)
 
 """
     printmin([io=stdout,] ho)
-
-Prints the parameters that minimized the function.
 """
 printmin(ho::Hyperoptimizer) = printmin(stdout, ho)
 function printmin(io::IO, ho::Hyperoptimizer)
