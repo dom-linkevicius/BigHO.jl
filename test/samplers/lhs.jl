@@ -34,6 +34,13 @@
     # use Hyperoptimizer(objective, candidates, sampler; n=...) instead.
     @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),); sampler=LHSampler())
 
+    # An already-initialized sampler is rejected rather than silently re-drawn for the new n.
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),), ho.sampler; n=50)
+    # An untouched one can still seed as many optimizers as you like -- init never mutates it.
+    fresh = LHSampler()
+    @test Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),), fresh; n=5) isa Hyperoptimizer
+    @test Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),), fresh; n=9) isa Hyperoptimizer
+
     # A Continuous domain carries no level count of its own, so any n works with any domain -- the
     # strata come from n, and the domain only decodes them.
     ho_any_n = Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),); sampler=LHSampler(), n=7)

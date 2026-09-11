@@ -11,6 +11,8 @@ LHSampler(; rng::Random.AbstractRNG=StableRNG(1)) = LHSampler(rng, Matrix{Float6
 _discrete_product(candidates) = prod((length(d) for d in candidates if d isa Union{Nominal,Ordinal}); init=1)
 
 function init(s::LHSampler, candidates, n)
+    isempty(s.design) ||
+        throw(ArgumentError("LHSampler: this sampler is already initialized with a design for $(size(s.design, 2)) trials -- pass a fresh LHSampler(), since re-initializing would silently replace that design with one drawn for different candidates or a different n"))
     product = _discrete_product(candidates)
     n < product && @warn "LHSampler: n ($n) is less than the number of discrete-variable combinations ($product) -- not every combination can be covered with this budget"
     design = QuasiMonteCarlo.sample(n, length(candidates), QuasiMonteCarlo.LatinHypercubeSample(rng=s.rng))
