@@ -17,16 +17,13 @@ function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, inner::Sampl
     return SuccessiveHalving{Sync}(R, r_min, η, inner)
 end
 
-# candidates/params always carry a reserved :r name -- looked up by key rather than assumed to be
-# at a fixed position, so removing it never depends on where adding it put it.
-_add_r(candidates::NamedTuple, r_domain) = merge(NamedTuple{(:r,)}((r_domain,)), candidates)
-_drop_r(params::NamedTuple) = params[filter(!=(:r), keys(params))]
-_drop_r(candidates::Tuple) = candidates[2:end] # no keys at this layer -- :r is always first by construction
+# :r is stamped onto a trial's params at entry creation, never added to ho.candidates: the resource
+# level comes from the schedule, so it has no domain to sample and no unit coordinate to carry.
+_add_r(params::NamedTuple, r::Int) = merge((r=r,), params)
 
 # ndigits(n;base) computes ⌊log_base(n)⌋ exactly (no floating-point log, unlike floor(log(R/r_min)/log(η))
 # which misrounds on exact powers of η). R÷r_min is safe here since floor is monotonic.
 _smax(R::Int, r_min::Int, η::Int) = ndigits(R ÷ r_min; base=η) - 1
-_resource_levels(R::Int, r_min::Int, η::Int) = [r_min * η^i for i in 0:_smax(R, r_min, η)]
 function _capacity(R::Int, r_min::Int, η::Int, k::Int, i::Int)
     smax = _smax(R, r_min, η)
     n0 = ceil(Int, (smax + 1) * η^(k - 1) / k)
@@ -54,36 +51,32 @@ end
 # (a future BOHB would override it instead of delegating to `inner`).
 function (s::SuccessiveHalving)(candidates, runs)
     action = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs)
-    if action[1] === :draw
-        k = action[2]
-        raw_params = _sample_sh_inner(s, candidates, runs)
-        return vcat(_resource(s.R, s.r_min, s.η, k, 1), raw_params)
-    end
-    k, i, promoted_id = action[2], action[3], action[4]
-    params = collect(_drop_r(runs[promoted_id].params)) # drop the reserved :r slot, by key not position
-    return vcat(_resource(s.R, s.r_min, s.η, k, i + 1), params)
+    action[1] === :draw && return _sample_sh_inner(s, candidates, runs)
+    return copy(runs[action[4]].unit_params) # a promotion re-proposes the promoted trial's own coordinate
 end
 
 # Shared terminal tail-call: fall back to the previous bracket, or declare exhausted.
 _fallback_bracket(s::SuccessiveHalving, k::Int, runs) = k > 1 ? _bracket_decision(s, k - 1, runs) : (:exhausted,)
 
 _sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
-_sample_sh_inner(inner::Sampler, candidates, runs) = inner(_drop_r(candidates), runs)
+_sample_sh_inner(inner::Sampler, candidates, runs) = inner(candidates, runs)
 # LHSampler is row-indexed off length(runs) -- needs only fresh (never-promoted) draws so its
 # row index stays aligned with the design it was built for, not inflated by promotions.
-_sample_sh_inner(inner::LHSampler, candidates, runs) = inner(_drop_r(candidates), filter(e -> get(e.metadata, :rung, nothing) == 1, runs))
+_sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(e -> get(e.metadata, :rung, nothing) == 1, runs))
 
-init(s::SuccessiveHalving, candidates, n) = typeof(s)(s.R, s.r_min, s.η, init(s.inner, _drop_r(candidates), _total_draws(s.R, s.r_min, s.η)))
+init(s::SuccessiveHalving, candidates, n) = typeof(s)(s.R, s.r_min, s.η, init(s.inner, candidates, _total_draws(s.R, s.r_min, s.η)))
 exhausted(s::SuccessiveHalving, ho) = first(_bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)) === :exhausted
 blocked(s::SuccessiveHalving, ho) = first(_bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)) === :wait
 
-function create_run_entry(s::SuccessiveHalving, ho, id, params)
+function create_run_entry(s::SuccessiveHalving, ho, id, params, unit_params)
     action = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)
     if action[1] === :draw
         k = action[2]
-        return RunEntry(id, params, Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
+        with_r = _add_r(params, _resource(s.R, s.r_min, s.η, k, 1))
+        return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
     end
     k, i, promoted_id = action[2], action[3], action[4]
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, k, i + 1))
     metadata = Dict{Symbol,Any}(:rung => i + 1, :bracket_k => k, :promoted_from => promoted_id)
-    return RunEntry(id, params, metadata; pre_artefact=ho.runs[promoted_id].post_artefact)
+    return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[promoted_id].post_artefact)
 end

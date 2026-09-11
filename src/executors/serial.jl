@@ -1,7 +1,5 @@
 """
     Serial()
-
-Runs each trial synchronously, one at a time.
 """
 mutable struct Serial <: AbstractExecutor
     buffer::Vector{Tuple{RunEntry,Any}}

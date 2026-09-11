@@ -2,7 +2,7 @@
     @info "Testing summaryplot(ho)"
 
     ho = Hyperoptimizer(p -> (p.a - 3)^2 + (p.b - 1)^2,
-                         (a=Continuous(0, 10, 0.1), b=Nominal([1, 2, 3, 4, 5])); n=20)
+                         (a=Continuous(0, 10), b=Nominal([1, 2, 3, 4, 5])); n=20)
     run!(ho; show_progress=false)
     fig = summaryplot(ho)
     @test fig isa CairoMakie.Figure

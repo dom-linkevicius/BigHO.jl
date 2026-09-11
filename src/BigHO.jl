@@ -2,7 +2,7 @@ module BigHO
 
 export Hyperoptimizer, run!, settarget!
 export Stateful
-export RandomSampler, LHSampler, get_lhs_optim_history
+export RandomSampler, LHSampler
 export Hyperband, ASHA
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
@@ -14,11 +14,10 @@ using Random
 using Printf
 using Distributed
 using StableRNGs: StableRNG
-using StatsBase: Weights, sample
 import JLD2
 import ProgressMeter
 import DataFrames
-import LatinHypercubeSampling
+import QuasiMonteCarlo
 
 include("basic/domains.jl")
 include("basic/types.jl")
@@ -31,8 +30,6 @@ include("samplers/sha_based/hyperband.jl")
 include("samplers/sha_based/asha.jl")
 """
     FixedPlanSampler
-
-Sampler types whose plan is fixed at construction (e.g. a Latin Hypercube design matrix, or Hyperband/ASHA's own bracket schedule), so `settarget!` can't work for them.
 """
 const FixedPlanSampler = Union{LHSampler,Hyperband,ASHA}
 

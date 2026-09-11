@@ -3,9 +3,9 @@ import ProgressMeter
 @testset "Progress" begin
     @info "Testing Progress"
 
-    # show_progress defaults to true and requires ho.n to be set (see run!'s docstring).
-    ho_nontarget = Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),))
-    @test_throws ArgumentError run!(ho_nontarget)
+    # n has no default -- without a target there's nothing for the bar to track, and run!'s
+    # ask loop would have no stopping condition either.
+    @test_throws UndefKeywordError Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),))
 
     # Purely cosmetic -- doesn't change the outcome. ProgressMeter writes directly to stderr, not through Logging, so it doesn't need silencing here.
     ho = Hyperoptimizer(p -> p.a^2, (a=Ordinal(1:20),); n=10)

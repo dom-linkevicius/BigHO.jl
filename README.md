@@ -49,7 +49,7 @@ function noisy_bowl(p; pre_artefact=nothing)
     return total / n_done, (n_done, total)
 end
 
-candidates = (x=Continuous(-5.0, 5.0, 0.1), y=Continuous(-5.0, 5.0, 0.1))
+candidates = (x=Continuous(-5.0, 5.0), y=Continuous(-5.0, 5.0))
 ho = Hyperoptimizer(Stateful(noisy_bowl), candidates, Hyperband(R=27))
 
 # save_path/save_every checkpoint the run every 10 trials told -- after a crash, resume with

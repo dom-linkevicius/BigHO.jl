@@ -7,7 +7,7 @@
     ex = Serial()
     BigHO.start!(ex, nothing)
     @test BigHO.capacity(ex) == 1
-    entry = BigHO.RunEntry(1, (a=1,))
+    entry = BigHO.RunEntry(1, (a=1,), Float64[]) # no unit coordinate: built by hand, not by a sampler
     BigHO.submit!(ex, entry, p -> p.a)
     @test BigHO.capacity(ex) == 0 # one already-completed result waiting to be polled
     out = BigHO.poll(ex)
