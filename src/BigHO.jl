@@ -31,8 +31,6 @@ include("samplers/sha_based/hyperband.jl")
 include("samplers/sha_based/asha.jl")
 """
     FixedPlanSampler
-
-Sampler types whose plan is fixed at construction (e.g. a Latin Hypercube design matrix, or Hyperband/ASHA's own bracket schedule), so `settarget!` can't work for them.
 """
 const FixedPlanSampler = Union{LHSampler,Hyperband,ASHA}
 

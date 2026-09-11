@@ -1,10 +1,5 @@
 """
     Threaded(max_concurrency=Threads.nthreads())
-
-Runs each trial as a separate task via `Threads.@spawn`, up to
-`max_concurrency` at once. Warns if only one Julia thread is available --
-trials still run concurrently as tasks, but not in true parallel (start
-Julia with `--threads=N` for that).
 """
 mutable struct Threaded <: AbstractExecutor
     max_concurrency::Int
@@ -35,8 +30,6 @@ end
 
 """
     shutdown!(executor::Threaded)
-
-Waits for every trial to finish -- Julia can't forcibly cancel a task. Does NOT interrupt a still-running one first: racing `schedule(t, exc; error=true)` against the task's own completion can crash the whole process, not just raise an exception.
 """
 function shutdown!(executor::Threaded)
     for t in executor.tasks

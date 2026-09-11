@@ -1,13 +1,5 @@
 """
     Domain
-
-A hyperparameter's kind and candidate values -- nominal, ordinal, or
-continuous. `type` (`:nominal`/`:ordinal`/`:continuous_linear`/`:continuous_arbitrary`)
-tags the kind (continuous is split by whether `values` is a known-linear grid
-or an arbitrary sequence -- see [`Continuous`](@ref)), `values` holds the
-sorted candidates, `weights` is an optional per-candidate sampling weight.
-Construct via [`Nominal`](@ref)/[`Ordinal`](@ref)/[`Continuous`](@ref) rather
-than this struct directly.
 """
 struct Domain
     type::Symbol
@@ -27,7 +19,7 @@ struct Domain
 end
 
 """
-Default RNG for `rand(d::Domain)` calls with no explicit `rng` argument.
+    DEFAULT_DOMAIN_RNG
 """
 const DEFAULT_DOMAIN_RNG = StableRNG(1)
 Base.rand(d::Domain) = rand(DEFAULT_DOMAIN_RNG, d)
@@ -41,19 +33,11 @@ _draw(rng::Random.AbstractRNG, d::Domain, weights::Vector{Float64}) = sample(rng
 
 """
     rand([rng,] d::Domain)
-
-Draw a candidate from `d`, uniformly unless `d.weights` was given.
 """
 Base.rand(rng::Random.AbstractRNG, d::Domain) = _draw(rng, d, d.weights)
 
 """
     x in d::Domain
-
-Whether `x` is one of `d`'s candidate values. Always a `Bool`, even for
-`x === missing`. `d.values` is the exact, already-materialized list of
-candidates for every domain kind (never recomputed via arithmetic at check
-time), so this is always plain equality -- no floating-point tolerance
-involved, or needed.
 """
 Base.in(x, d::Domain) = x in d.values
 Base.in(::Missing, ::Domain) = false
@@ -67,10 +51,6 @@ _from_values(type::Symbol, values::AbstractVector, weights) = Domain(type, colle
 """
     Nominal(levels::Int; weights=nothing)
     Nominal(values::AbstractVector; weights=nothing)
-
-A discrete dimension with no meaningful order between its `levels` values
-(e.g. `Nominal([tanh, exp, identity])`). `weights`, if given, biases `rand`
-away from uniform.
 """
 Nominal(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing) = _from_levelcount(:nominal, levels, weights)
 Nominal(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing) = _from_values(:nominal, values, weights)
@@ -78,12 +58,6 @@ Nominal(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing)
 """
     Ordinal(levels::Int; weights=nothing)
     Ordinal(values::AbstractVector; weights=nothing)
-
-A discrete dimension with a meaningful order (e.g. `Ordinal(["low",
-"medium", "high"])`), even where the values aren't numeric. Numeric
-`values` must be sorted increasing (`ArgumentError` otherwise); order can't
-be verified for non-numeric values, so construction just warns and trusts
-the given order. `weights`, if given, biases `rand` away from uniform.
 """
 Ordinal(levels::Int; weights::Union{Vector{Float64},Nothing}=nothing) = _from_levelcount(:ordinal, levels, weights)
 function Ordinal(values::AbstractVector; weights::Union{Vector{Float64},Nothing}=nothing)
@@ -99,16 +73,6 @@ _check_order(values::AbstractVector) =
 """
     Continuous(min, max, dt; weights=nothing)
     Continuous(values::AbstractVector{<:Real}; weights=nothing)
-
-A continuous real-valued dimension. The `(min, max, dt)` form is a grid
-from `min` to `max` spaced `dt` apart (`dt` is the point spacing, not a
-count; the last point falls short of `max` if it doesn't divide evenly) --
-tagged `:continuous_linear`, since it's known to be evenly spaced.
-The `values` form takes an explicit, strictly increasing sequence instead
-(e.g. a log-spaced range like `exp10.(LinRange(-1, 3, 50))`), not
-necessarily evenly spaced -- tagged `:continuous_arbitrary`; some samplers
-(e.g. [`LHSampler`](@ref)) that assume linear spacing reject this form.
-`weights`, if given, biases `rand` away from uniform.
 """
 function Continuous(min::Real, max::Real, dt::Real; weights::Union{Vector{Float64},Nothing}=nothing)
     min, max, dt = Float64(min), Float64(max), Float64(dt)

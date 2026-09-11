@@ -1,12 +1,5 @@
 """
     LHSampler(; gens)
-
-Draw all `ho.n` trials at once from an optimized Latin Hypercube design over `ho.candidates`.
-A `FixedPlanSampler`: can't be resumed via `settarget!` -- the design is optimized for one fixed trial count.
-Each `Domain` maps directly onto `LatinHypercubeSampling.jl`'s own dimension kinds (`Nominal`/`Ordinal` -> `Categorical`, `Continuous(min,max,dt)` -> `Continuous`), so no separate `dims=` argument is needed. `Continuous(values)` (arbitrary spacing) isn't supported.
-Construct via `Hyperoptimizer(objective, candidates, LHSampler(gens=...); n=...)`, which rebuilds `Continuous(min,max,dt)` domains to match `n` -- see that constructor's own docstring.
-`weights` on any domain isn't supported.
-`gens` (the number of LHC-optimization generations) must be passed explicitly -- there's no default, since a reasonable value depends heavily on `n` and dimensionality; use [`get_lhs_optim_history`](@ref) to check whether it converged.
 """
 struct LHSampler <: Sampler
     gens::Int
@@ -85,8 +78,6 @@ create_run_entry(::LHSampler, ho, id, params) = RunEntry(id, params)
 
 """
     get_lhs_optim_history(ho) -> Vector{Float64}
-
-The per-generation best Audze-Eglais fitness from `LHCoptim!`, for inspecting whether the optimization converged. Only defined for a Hyperoptimizer using [`LHSampler`](@ref).
 """
 function get_lhs_optim_history(ho)
     ho.sampler isa LHSampler ||
