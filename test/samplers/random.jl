@@ -44,11 +44,10 @@
     # candidates must be Domain objects -- a plain array is rejected up front.
     @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=[1, 2, 3],); n=3)
 
-    # n must be non-negative -- a negative target would otherwise silently
-    # "reach target" with zero completed runs and run! would do nothing,
-    # with no error or warning explaining why.
+    # n must be positive -- a zero or negative target would silently "reach target" with zero
+    # completed runs and run! would do nothing, with no error explaining why.
     @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),); n=-1)
-    @test Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),); n=0) isa Hyperoptimizer
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),); n=0)
 end
 
 @testset "RandomSampler interface" begin

@@ -21,7 +21,7 @@ end
     Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n::Int)
 """
 function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Int)
-    n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
+    n > 0 || throw(ArgumentError("n must be positive, got $n"))
     cands = values(candidates)
     all(d -> d isa Domain, cands) ||
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
