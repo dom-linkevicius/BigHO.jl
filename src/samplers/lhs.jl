@@ -30,7 +30,7 @@ function _warn_missing_combinations(design::Matrix{Float64}, candidates)
     missing_combos = filter(c -> c ∉ covered, all_combos)
     isempty(missing_combos) && return nothing
     suffix = length(missing_combos) > 20 ? " (and $(length(missing_combos) - 20) more)" : ""
-    @warn "LHSampler: the design doesn't cover every discrete-variable combination$suffix" missing = first(missing_combos, 20)
+    @warn "LHSampler: the design doesn't cover every discrete-variable combination$suffix" uncovered = first(missing_combos, 20)
     return nothing
 end
 
