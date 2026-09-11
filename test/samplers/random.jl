@@ -42,7 +42,7 @@
     @test String(take!(io)) == "a = 20\nb = 10\n"
 
     # candidates must be Domain objects -- a plain array is rejected up front.
-    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=[1, 2, 3],))
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=[1, 2, 3],); n=3)
 
     # n must be non-negative -- a negative target would otherwise silently
     # "reach target" with zero completed runs and run! would do nothing,

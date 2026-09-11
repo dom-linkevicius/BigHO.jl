@@ -8,7 +8,7 @@ mutable struct Hyperoptimizer{S<:Sampler,F}
     candidates::Tuple
     sampler::S
     objective::F
-    n::Union{Int,Nothing}
+    n::Int
     runs::Vector{RunEntry}
     completed::Vector{Int}
     n_pending::Int
@@ -18,12 +18,10 @@ mutable struct Hyperoptimizer{S<:Sampler,F}
 end
 
 """
-    Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n=nothing)
+    Hyperoptimizer(objective, candidates::NamedTuple; sampler=RandomSampler(), n::Int)
 """
-function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Union{Int,Nothing}=nothing)
-    n === nothing || n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
-    n !== nothing || !(sampler isa FixedPlanSampler) ||
-        throw(ArgumentError("$(typeof(sampler)) needs n -- pass n explicitly, or construct via Hyperoptimizer(objective, candidates, sampler; n=...)"))
+function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=RandomSampler(), n::Int)
+    n >= 0 || throw(ArgumentError("n must be non-negative, got $n"))
     cands = values(candidates)
     all(d -> d isa Domain, cands) ||
         throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
@@ -32,16 +30,6 @@ function Hyperoptimizer(objective, candidates::NamedTuple; sampler::Sampler=Rand
     return Hyperoptimizer(params, cands, initialized_sampler, objective, n,
                            RunEntry[], Int[], 0, Initialized,
                            nothing, ReentrantLock())
-end
-
-"""
-    Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
-"""
-function Hyperoptimizer(objective, candidates::NamedTuple, sampler::LHSampler; n::Int)
-    cands = values(candidates)
-    all(d -> d isa Domain, cands) ||
-        throw(ArgumentError("every candidate must be a Domain (Continuous/Nominal/Ordinal), got types: $(typeof.(cands))"))
-    return Hyperoptimizer(objective, candidates; sampler=sampler, n=n)
 end
 
 """
@@ -60,7 +48,7 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHa
     return Hyperoptimizer(objective, candidates; sampler=sampler, n=n, kwargs...)
 end
 
-reached_target(ho::Hyperoptimizer) = ho.n !== nothing && length(ho.runs) >= ho.n
+reached_target(ho::Hyperoptimizer) = length(ho.runs) >= ho.n
 
 # Trials ever told an outcome, regardless of how many run! calls it took -- used for save_every's cadence.
 n_told(ho::Hyperoptimizer) = length(ho.runs) - ho.n_pending
@@ -73,7 +61,7 @@ function settarget!(ho::Hyperoptimizer, n::Int)
         throw(ArgumentError("settarget!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     ho.n_pending > 0 &&
         @warn "settarget!: $(ho.n_pending) trial(s) still pending -- changing the target while trials are in flight may race with them"
-    ho.n !== nothing && n < ho.n &&
+    n < ho.n &&
         throw(ArgumentError("settarget!: new target ($n) is less than the current target ($(ho.n)) -- settarget! can only raise the target"))
     ho.sampler isa FixedPlanSampler &&
         throw(ArgumentError("settarget!: $(typeof(ho.sampler)) fixes its plan to the sample count given at construction and can't respond to a new target"))
@@ -143,8 +131,6 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
         throw(ArgumentError("run!: save_every must be >= 1, got $save_every"))
     save_path !== nothing && ho.objective === nothing &&
         throw(ArgumentError("run!: save_path requires a real ho.objective -- checkpointing substitutes `nothing` for it in the saved file (to be replaced with a fresh objective via load_hyperoptimizer), which would be ambiguous if it was already `nothing`"))
-    show_progress && ho.n === nothing &&
-        throw(ArgumentError("run!: show_progress requires ho.n to be set"))
     ho.status == Errored &&
         throw(ArgumentError("run!: this Hyperoptimizer already errored and cannot be resumed -- construct a new Hyperoptimizer to continue"))
     if reached_target(ho)

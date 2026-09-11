@@ -13,7 +13,7 @@
                          (a=Continuous(1, 5),
                           b=Nominal([true, false]),
                           c=Ordinal([1, 10, 100, 1000])),
-                         LHSampler(); n=100)
+                         sampler=LHSampler(), n=100)
     run!(ho)
     @test minimum(ho) < 300
     @test length(history(ho)) == 100
@@ -30,16 +30,12 @@
     # the design is only valid for its original size.
     @test_throws ArgumentError settarget!(ho, 200)
 
-    # n is required for a FixedPlanSampler via the plain keyword constructor --
-    # use Hyperoptimizer(objective, candidates, sampler; n=...) instead.
-    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),); sampler=LHSampler())
-
     # An already-initialized sampler is rejected rather than silently re-drawn for the new n.
-    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),), ho.sampler; n=50)
+    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),); sampler=ho.sampler, n=50)
     # An untouched one can still seed as many optimizers as you like -- init never mutates it.
     fresh = LHSampler()
-    @test Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),), fresh; n=5) isa Hyperoptimizer
-    @test Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),), fresh; n=9) isa Hyperoptimizer
+    @test Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),); sampler=fresh, n=5) isa Hyperoptimizer
+    @test Hyperoptimizer(p -> p.a, (a=Continuous(1, 10),); sampler=fresh, n=9) isa Hyperoptimizer
 
     # A Continuous domain carries no level count of its own, so any n works with any domain -- the
     # strata come from n, and the domain only decodes them.
@@ -99,7 +95,7 @@ end
     # 1D: LHC visits every one of n strata exactly once -- for a single dimension that IS an
     # exhaustive sweep at stratum resolution, so the optimum is found to within half a stratum
     # deterministically, not just with high probability. 100 strata over [1, 100] -> ~0.5 wide.
-    ho1 = Hyperoptimizer(p -> (p.x - 37)^2, (x=Continuous(1, 100),), LHSampler(); n=100)
+    ho1 = Hyperoptimizer(p -> (p.x - 37)^2, (x=Continuous(1, 100),); sampler=LHSampler(), n=100)
     run!(ho1)
     @test abs(minimizer(ho1)[1] - 37) < 0.5
 
@@ -108,8 +104,8 @@ end
     # deliberate spread still converges much closer than n=100 random draws would.
     target = (33.0, 68.0)
     ho2 = Hyperoptimizer(p -> (p.x - target[1])^2 + (p.y - target[2])^2,
-                         (x=Continuous(1, 100), y=Continuous(1, 100)),
-                         LHSampler(); n=100)
+                         (x=Continuous(1, 100), y=Continuous(1, 100));
+                         sampler=LHSampler(), n=100)
     run!(ho2)
     m = minimizer(ho2)
     @test abs(m[1] - target[1]) < 10
