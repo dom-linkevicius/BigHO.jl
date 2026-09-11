@@ -19,8 +19,8 @@ import ProgressMeter
 import DataFrames
 import LatinHypercubeSampling
 
-include("domains.jl")
-include("types.jl")
+include("basic/domains.jl")
+include("basic/types.jl")
 
 include("samplers/sampler.jl")
 include("samplers/random.jl")
@@ -40,11 +40,11 @@ include("executors/serial.jl")
 include("executors/threaded.jl")
 include("executors/distributed_queue.jl")
 
-include("optimizer.jl")
+include("basic/optimizer.jl")
 
-include("report.jl")
-include("persistence.jl")
-include("dataframe.jl")
-include("plotting.jl")
+include("basic/report.jl")
+include("basic/persistence.jl")
+include("basic/dataframe.jl")
+include("basic/plotting.jl")
 
 end # module
