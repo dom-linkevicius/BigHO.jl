@@ -57,18 +57,6 @@ Continuous(min::Real, max::Real; transform=identity) =
     Continuous{typeof(transform)}(Float64(min), Float64(max), transform)
 
 """
-    DEFAULT_DOMAIN_RNG
-"""
-const DEFAULT_DOMAIN_RNG = StableRNG(1)
-
-"""
-    rand([rng,] d::Domain)
-"""
-Base.rand(d::Domain) = rand(DEFAULT_DOMAIN_RNG, d)
-Base.rand(rng::Random.AbstractRNG, d::Union{Nominal,Ordinal}) = rand(rng, d.values)
-Base.rand(rng::Random.AbstractRNG, d::Continuous) = from_unit(d, rand(rng))
-
-"""
     length(d::Union{Nominal,Ordinal})
 """
 Base.length(d::Union{Nominal,Ordinal}) = length(d.values)

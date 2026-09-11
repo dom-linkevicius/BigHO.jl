@@ -86,25 +86,6 @@
         @test BigHO.from_unit(c, 3.0) == 5.0
     end
 
-    @testset "rand" begin
-        rng = StableRNG(1)
-
-        @test all(rand(rng, nom) in 1:4 for _ in 1:1000)
-        @test all(rand(rng, ord) in 1:3 for _ in 1:1000)
-        @test all(1.0 <= rand(rng, c) <= 5.0 for _ in 1:1000)
-        @test all(1e-4 <= rand(rng, Continuous(-4, -1; transform=exp10)) <= 1e-1 for _ in 1:200)
-
-        # Every level is reachable, not just the interior ones.
-        @test Set(rand(rng, nom) for _ in 1:1000) == Set(1:4)
-
-        nom_fns = Nominal([tanh, exp, identity]) # functions have no natural order -- Nominal, not Ordinal
-        @test all(rand(rng, nom_fns) in (tanh, exp, identity) for _ in 1:100)
-
-        @test rand(nom) isa Int # the default rng also works
-        @test rand(ord) isa Int
-        @test rand(c) isa Float64
-    end
-
     @testset "length" begin
         @test length(nom) == 4
         @test length(ord) == 3

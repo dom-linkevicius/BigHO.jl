@@ -77,6 +77,13 @@ end
                 producer = findfirst(x -> x.status == BigHO.Completed && x.post_artefact[1] == pre_call_id, ho.runs)
                 @test producer !== nothing
                 @test producer < e.id # causality: can only resume something already told
+
+                # A promotion is the SAME config trained longer -- only :r may differ. Otherwise the
+                # inherited weights would belong to different hyperparameters than the entry records.
+                prev = ho.runs[e.metadata[:promoted_from]]
+                @test (e.params.a, e.params.b) == (prev.params.a, prev.params.b)
+                @test e.params.r > prev.params.r
+                @test e.unit_params == prev.unit_params
             end
         end
         @test n_promoted > 0 # otherwise this test isn't exercising promotion at all
