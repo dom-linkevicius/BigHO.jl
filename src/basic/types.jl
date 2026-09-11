@@ -16,7 +16,7 @@ struct RunEntry{P<:NamedTuple}
 end
 function RunEntry(id::Int, params::NamedTuple, unit_params::AbstractVector{<:Real},
                   metadata::Dict{Symbol,Any}=Dict{Symbol,Any}(); pre_artefact=nothing)
-    return RunEntry(id, params, collect(Float64, unit_params), metadata, Pending, missing, nothing, pre_artefact, nothing)
+    return RunEntry(id, params, unit_params, metadata, Pending, missing, nothing, pre_artefact, nothing)
 end
 
 _with_result(entry::RunEntry, status::RunStatus, value, post_artefact; error=nothing) =

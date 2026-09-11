@@ -92,8 +92,6 @@ function ask!(ho::Hyperoptimizer)
         exhausted(ho.sampler, ho) && throw(ArgumentError("Hyperoptimizer's sampler is exhausted: no more candidates available"))
         reached_target(ho) && throw(ArgumentError("Hyperoptimizer has already reached its target of $(ho.n) trials; call settarget! to raise it before asking for more"))
         unit_params = ho.sampler(ho.candidates, ho.runs)
-        length(unit_params) == length(ho.candidates) || # otherwise zip below would silently drop dimensions
-            throw(ArgumentError("ask!: $(typeof(ho.sampler)) proposed $(length(unit_params)) unit coordinates for $(length(ho.candidates)) candidates -- a sampler must return one per candidate, in ho.candidates order"))
         id = length(ho.runs) + 1
         decoded = Tuple(from_unit(d, u) for (d, u) in zip(ho.candidates, unit_params))
         params = NamedTuple{Tuple(ho.params)}(decoded) # e.g. (a = 1.5, b = true) -- labeled everywhere, not just in warnings

@@ -3,8 +3,6 @@
 """
 abstract type Domain end
 
-_check_nonempty(values) = isempty(values) && throw(ArgumentError("values must be non-empty"))
-
 """
     Nominal(levels::Int)
     Nominal(values::AbstractVector)
@@ -12,7 +10,7 @@ _check_nonempty(values) = isempty(values) && throw(ArgumentError("values must be
 struct Nominal{V<:AbstractVector} <: Domain
     values::V
     function Nominal{V}(values::V) where {V<:AbstractVector}
-        _check_nonempty(values)
+        isempty(values) && throw(ArgumentError("values must be non-empty"))
         return new{V}(values)
     end
 end
@@ -26,7 +24,7 @@ Nominal(levels::Int) = Nominal(Base.OneTo(levels))
 struct Ordinal{V<:AbstractVector} <: Domain
     values::V
     function Ordinal{V}(values::V) where {V<:AbstractVector}
-        _check_nonempty(values)
+        isempty(values) && throw(ArgumentError("values must be non-empty"))
         _check_order(values)
         return new{V}(values)
     end
@@ -48,18 +46,15 @@ struct Continuous{F} <: Domain
     transform::F
     function Continuous{F}(lo::Float64, hi::Float64, transform::F) where {F}
         hi > lo || throw(ArgumentError("max ($hi) must be greater than min ($lo)"))
-        _check_finite(transform, lo, hi)
+        # Endpoints only: a grid of any size can step over a pole, so sampling the interior
+        # wouldn't establish anything it doesn't already.
+        (isfinite(transform(lo)) && isfinite(transform(hi))) ||
+            throw(ArgumentError("transform must be finite at both ends of [$lo, $hi]; got non-finite values"))
         return new{F}(lo, hi, transform)
     end
 end
 Continuous(min::Real, max::Real; transform=identity) =
     Continuous{typeof(transform)}(Float64(min), Float64(max), transform)
-
-# Endpoints only: a grid of any size can step over a pole, so sampling the interior wouldn't
-# establish anything it doesn't already.
-_check_finite(transform, lo::Float64, hi::Float64) =
-    (isfinite(transform(lo)) && isfinite(transform(hi))) ||
-        throw(ArgumentError("transform must be finite at both ends of [$lo, $hi]; got non-finite values"))
 
 """
     DEFAULT_DOMAIN_RNG
