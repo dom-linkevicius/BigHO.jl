@@ -3,7 +3,7 @@ module BigHO
 export Hyperoptimizer, run!, settarget!
 export Stateful
 export RandomSampler, LHSampler
-export Hyperband, ASHA, DEHB, DEHBSampler
+export Hyperband, ASHA, DEHB
 export Serial, Threaded, DistributedQueue
 export minimizer, history, results, printmin
 export summaryplot

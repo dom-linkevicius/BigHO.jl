@@ -13,20 +13,21 @@ struct DEHBSampler{T<:Random.AbstractRNG} <: Sampler
     rng::T
 end
 function DEHBSampler(; F::Real=0.5, crossover::Real=0.9, rng::Random.AbstractRNG=StableRNG(1))
-    F > 0 || throw(ArgumentError("F must be positive, got $F"))
+    0 < F <= 1 || throw(ArgumentError("F must be in (0, 1], got $F"))
     0 <= crossover <= 1 || throw(ArgumentError("crossover must be in [0,1], got $crossover"))
     return DEHBSampler(Float64(F), Float64(crossover), rng)
 end
 
-on_tell!(::DEHBSampler, runs, entry) = nothing
+# init is the only hook SuccessiveHalving calls on its inner sampler; everything else is reached
+# only by driving a DEHBSampler as a sampler in its own right, which it can't be.
 init(s::DEHBSampler, candidates, n) = s
-exhausted(::DEHBSampler, ho) = false
-blocked(::DEHBSampler, ho) = false
-create_run_entry(::DEHBSampler, ho, id, params) = RunEntry(id, params)
 
-# Only ever reached if used outside a SuccessiveHalving, where there are no rung budgets to
-# evolve within -- the useful path is _sample_sh_inner(s::DEHB, ...) below.
-(s::DEHBSampler)(candidates, runs) = [rand(s.rng, d) for d in candidates]
+_dehb_standalone() = throw(ArgumentError("DEHBSampler can't be used on its own -- it evolves the trials already told at one rung's budget, and only DEHB's schedule defines what that budget is; construct DEHB(; R, ...) instead"))
+on_tell!(::DEHBSampler, runs, entry) = _dehb_standalone()
+exhausted(::DEHBSampler, ho) = _dehb_standalone()
+blocked(::DEHBSampler, ho) = _dehb_standalone()
+create_run_entry(::DEHBSampler, ho, id, params, unit_params) = _dehb_standalone()
+(::DEHBSampler)(candidates, runs) = _dehb_standalone()
 
 """
     DEHB(; R, η=3, r_min=1, F=0.5, crossover=0.9, rng=StableRNG(1))
@@ -44,15 +45,6 @@ SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, F::Real
                                        rng::Random.AbstractRNG=StableRNG(1)) =
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
 
-# Unit-hypercube encoding by candidate index -- the bin centre of a value's position in the
-# domain's own candidate list, so DE arithmetic respects whatever spacing the user declared
-# (uniform in [0,1] over a log grid stays uniform in log space).
-# PROVISIONAL: to be replaced by Domain's own encoding once that lands.
-_to_unit(d::Domain, v) = (findfirst(==(v), d.values) - 0.5) / length(d.values)
-_from_unit(d::Domain, u::Real) = d.values[clamp(ceil(Int, u * length(d.values)), 1, length(d.values))]
-_to_unit(dims::Tuple, params::NamedTuple) = Float64[_to_unit(d, v) for (d, v) in zip(dims, values(params))]
-_from_unit(dims::Tuple, u::AbstractVector{<:Real}) = [_from_unit(d, ui) for (d, ui) in zip(dims, u)]
-
 # DE/rand/1/bin: mutant = x_r1 + F(x_r2 - x_r3) over three distinct members, then binomial
 # crossover with the target, with one coordinate always taken from the mutant so a trial can
 # never come out identical to its target.
@@ -68,11 +60,11 @@ end
 # the outer sampler knows the schedule: a fresh draw for bracket k sits at rung 1's resource
 # level, so that level's completed trials are the subpopulation DEHB evolves.
 function _sample_sh_inner(s::DEHB, candidates, runs)
-    de, dims = s.inner, _drop_r(candidates)
+    de = s.inner
     k = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs)[2]
     budget = _resource(s.R, s.r_min, s.η, k, 1)
-    pool = [_to_unit(dims, _drop_r(e.params)) for e in runs if e.status === Completed && e.params.r == budget]
+    pool = [e.unit_params for e in runs if e.status === Completed && e.params.r == budget]
     # DE/rand/1 needs a target plus three distinct parents; below that, initialise at random.
-    length(pool) >= 4 || return [rand(de.rng, d) for d in dims]
-    return _from_unit(dims, _de_trial(de, pool))
+    length(pool) >= 4 || return [rand(de.rng) for _ in candidates]
+    return _de_trial(de, pool)
 end
