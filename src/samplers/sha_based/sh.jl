@@ -1,10 +1,10 @@
 # Hyperband and ASHA share this exact shape (Sync=true/false picks _bracket_decision). Immutable --
 # bracket/rung state is derived fresh from `runs` each time, nothing cached.
-struct SuccessiveHalving{Sync} <: Sampler
+struct SuccessiveHalving{Sync,S<:Sampler} <: Sampler
     R::Int
     r_min::Int
     η::Int
-    inner::Sampler # draws fresh bottom-rung candidates -- any Sampler, e.g. RandomSampler (default) or LHSampler
+    inner::S # draws fresh bottom-rung candidates -- any Sampler, e.g. RandomSampler (default) or LHSampler
 end
 function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, inner::Sampler=RandomSampler()) where {Sync}
     R > 0 || throw(ArgumentError("R must be positive, got $R"))
@@ -14,8 +14,21 @@ function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, inner::Sampl
     r_top = r_min * η^_smax(R, r_min, η)
     r_top == R ||
         @warn "SuccessiveHalving: the top resource level reached is $r_top, short of the requested R=$R -- smax=⌊log_η(R/r_min)⌋ floors to the nearest integer, so the schedule only lands exactly on R when R/r_min is an exact power of η"
-    return SuccessiveHalving{Sync}(R, r_min, η, inner)
+    return SuccessiveHalving{Sync,typeof(inner)}(R, r_min, η, inner)
 end
+
+# What _bracket_decision decided. The kind is a type parameter so the consumers dispatch on it;
+# :promote is the widest case, so every kind carries its fields and the unused ones are `missing`.
+struct SHDecision{K}
+    bracket::Union{Int,Missing}
+    rung::Union{Int,Missing}
+    promoted_from::Union{Int,Missing}
+end
+
+_draw(bracket::Int, rung::Int) = SHDecision{:draw}(bracket, rung, missing)
+_promote(bracket::Int, rung::Int, promoted_from::Int) = SHDecision{:promote}(bracket, rung, promoted_from)
+_wait() = SHDecision{:wait}(missing, missing, missing)
+_exhausted() = SHDecision{:exhausted}(missing, missing, missing)
 
 # :r is stamped onto a trial's params at entry creation, never added to ho.candidates: the resource
 # level comes from the schedule, so it has no domain to sample and no unit coordinate to carry.
@@ -50,13 +63,15 @@ end
 # Shared across every SuccessiveHalving sampler -- only _sample_sh_inner is dispatched per type
 # (a future BOHB would override it instead of delegating to `inner`).
 function (s::SuccessiveHalving)(candidates, runs)
-    action = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs)
-    action[1] === :draw && return _sample_sh_inner(s, candidates, runs)
-    return copy(runs[action[4]].unit_params) # a promotion re-proposes the promoted trial's own coordinate
+    return _propose(_bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs), s, candidates, runs)
 end
 
+_propose(::SHDecision{:draw}, s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s, candidates, runs)
+# A promotion re-proposes the promoted trial's own coordinate.
+_propose(d::SHDecision{:promote}, ::SuccessiveHalving, candidates, runs) = copy(runs[d.promoted_from].unit_params)
+
 # Shared terminal tail-call: fall back to the previous bracket, or declare exhausted.
-_fallback_bracket(s::SuccessiveHalving, k::Int, runs) = k > 1 ? _bracket_decision(s, k - 1, runs) : (:exhausted,)
+_fallback_bracket(s::SuccessiveHalving, k::Int, runs) = k > 1 ? _bracket_decision(s, k - 1, runs) : _exhausted()
 
 _sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
 _sample_sh_inner(inner::Sampler, candidates, runs) = inner(candidates, runs)
@@ -64,19 +79,25 @@ _sample_sh_inner(inner::Sampler, candidates, runs) = inner(candidates, runs)
 # row index stays aligned with the design it was built for, not inflated by promotions.
 _sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(e -> get(e.metadata, :rung, nothing) == 1, runs))
 
-init(s::SuccessiveHalving, candidates, n) = typeof(s)(s.R, s.r_min, s.η, init(s.inner, candidates, _total_draws(s.R, s.r_min, s.η)))
-exhausted(s::SuccessiveHalving, ho) = first(_bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)) === :exhausted
-blocked(s::SuccessiveHalving, ho) = first(_bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)) === :wait
+function init(s::SuccessiveHalving{Sync}, candidates, n) where {Sync}
+    inner = init(s.inner, candidates, _total_draws(s.R, s.r_min, s.η))
+    return SuccessiveHalving{Sync,typeof(inner)}(s.R, s.r_min, s.η, inner)
+end
+exhausted(s::SuccessiveHalving, ho) = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs) isa SHDecision{:exhausted}
+blocked(s::SuccessiveHalving, ho) = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs) isa SHDecision{:wait}
 
 function create_run_entry(s::SuccessiveHalving, ho, id, params, unit_params)
     action = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)
-    if action[1] === :draw
-        k = action[2]
-        with_r = _add_r(params, _resource(s.R, s.r_min, s.η, k, 1))
-        return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
-    end
-    k, i, promoted_id = action[2], action[3], action[4]
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, k, i + 1))
-    metadata = Dict{Symbol,Any}(:rung => i + 1, :bracket_k => k, :promoted_from => promoted_id)
-    return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[promoted_id].post_artefact)
+    return _entry_for(action, s, ho, id, params, unit_params)
+end
+
+function _entry_for(d::SHDecision{:draw}, s::SuccessiveHalving, ho, id, params, unit_params)
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket, d.rung))
+    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung, :bracket_k => d.bracket))
+end
+
+function _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket, d.rung + 1))
+    metadata = Dict{Symbol,Any}(:rung => d.rung + 1, :bracket_k => d.bracket, :promoted_from => d.promoted_from)
+    return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[d.promoted_from].post_artefact)
 end

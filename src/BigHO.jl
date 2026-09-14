@@ -25,9 +25,15 @@ include("basic/types.jl")
 include("samplers/sampler.jl")
 include("samplers/random.jl")
 include("samplers/lhs.jl")
+
+"""
+    BasicSamplers
+"""
+const BasicSamplers = Union{LHSampler,RandomSampler}
+
 include("samplers/sha_based/sh.jl")
-include("samplers/sha_based/hyperband.jl")
-include("samplers/sha_based/asha.jl")
+include("samplers/sha_based/synchronous.jl")
+include("samplers/sha_based/asynchronous.jl")
 """
     FixedPlanSampler
 """
