@@ -61,9 +61,10 @@ function plot_results(runs, metadata)
         isempty(finite_lower) || (ymin = min(ymin, minimum(finite_lower)))
     end
 
-    fig = Figure(size=(750, 950))
+    fig = Figure(size=(750, 500))
+    legend_source = nothing
     for (row, ex_name, title_word) in ((1, :Serial, "Serial"), (2, :Threaded, "Threaded"))
-        ax = Axis(fig[row, 1]; xlabel="wall-clock time (s)", ylabel="regret (best validation loss - global best)",
+        ax = Axis(fig[row, 1]; xlabel=(row == 2 ? "wall-clock time (s)" : ""),
                   xscale=log10, yscale=log10,
                   xminorticksvisible=true, xminorgridvisible=true, xminorticks=IntervalsBetween(9),
                   yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(9),
@@ -77,8 +78,12 @@ function plot_results(runs, metadata)
         end
         xlims!(ax, X_LOWER_LIMIT, X_UPPER_LIMIT)
         ylims!(ax, ymin, Y_UPPER_LIMIT)
-        axislegend(ax; position=:rt, nbanks=1)
+        legend_source = ax
     end
+    # Both rows plot the same four series, so one shared legend above them and one ylabel beside
+    # them, rather than a copy per axis.
+    Label(fig[1:2, 0], "regret (best validation loss - global best)"; rotation=pi / 2, tellheight=false)
+    Legend(fig[0, 1], legend_source; orientation=:horizontal, nbanks=1)
     save(joinpath(OUTDIR, "wallclock_regret_comparison.png"), fig)
 end
 
