@@ -8,12 +8,13 @@ const Hyperband = SuccessiveHalving{true,<:BasicSamplers}
 SuccessiveHalving{true,<:BasicSamplers}(; R::Int, η::Int=3, r_min::Int=1, inner::BasicSamplers=RandomSampler()) =
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, inner=inner)
 
-# Walks brackets top-down; a bracket is done for good once its top rung resolves, never revisited.
+# Walks brackets 1..smax+1 in order; a bracket is done for good once its top rung resolves, never revisited.
 # Pure (never calls `inner`) so exhausted/blocked/create_run_entry can safely re-derive it.
 function _bracket_decision(s::SHSync, k::Int, runs)
     R, r_min, η = s.R, s.r_min, s.η
+    n_rungs = _n_rungs(R, r_min, η, k)
     _dispatched_count(runs, k, 1) < _capacity(R, r_min, η, k, 1) && return _draw(k, 1)
-    for i in 1:(k-1)
+    for i in 1:(n_rungs-1)
         _rung_resolved(s, runs, k, i) || return _wait()
         told = _told_sorted(runs, k, i)
         target = min(_capacity(R, r_min, η, k, i + 1), length(told))
@@ -21,7 +22,7 @@ function _bracket_decision(s::SHSync, k::Int, runs)
         n_promoted = _dispatched_count(runs, k, i + 1)
         n_promoted < target && return _promote(k, i, first(told[n_promoted+1]))
     end
-    _rung_resolved(s, runs, k, k) || return _wait()
+    _rung_resolved(s, runs, k, n_rungs) || return _wait()
     return _fallback_bracket(s, k, runs)
 end
 
@@ -43,7 +44,7 @@ end
 function on_tell!(s::SHSync, runs, entry)
     k = entry.metadata[:bracket_k]
     i = entry.metadata[:rung]
-    i < k || return nothing # top rung: no promotion decision is ever made from here
+    i < _n_rungs(s.R, s.r_min, s.η, k) || return nothing # top rung: no promotion decision is ever made from here
     _rung_resolved(s, runs, k, i) || return nothing
     told = _told_sorted(runs, k, i)
     if isempty(told)

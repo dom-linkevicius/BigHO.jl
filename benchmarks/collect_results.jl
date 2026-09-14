@@ -30,7 +30,7 @@ if DEPLOY
     smax = BigHO._smax(R_MAX, R_MIN, ETA)
     total_resource_units = sum(
         BigHO._capacity(R_MAX, R_MIN, ETA, k, i) * (BigHO._resource(R_MAX, R_MIN, ETA, k, i) - (i > 1 ? BigHO._resource(R_MAX, R_MIN, ETA, k, i - 1) : 0))
-        for k in 1:(smax+1) for i in 1:k
+        for k in 1:(smax+1) for i in 1:BigHO._n_rungs(R_MAX, R_MIN, ETA, k)
     )
     hyperband_total_epochs = total_resource_units * EPOCHS_PER_RESOURCE
     RANDOM_FULL_EPOCHS[] = round(Int, hyperband_total_epochs / N_TRIALS)

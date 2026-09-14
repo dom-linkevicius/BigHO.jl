@@ -24,12 +24,15 @@ _add_r(params::NamedTuple, r::Int) = merge((r=r,), params)
 # ndigits(n;base) computes ⌊log_base(n)⌋ exactly (no floating-point log, unlike floor(log(R/r_min)/log(η))
 # which misrounds on exact powers of η). R÷r_min is safe here since floor is monotonic.
 _smax(R::Int, r_min::Int, η::Int) = ndigits(R ÷ r_min; base=η) - 1
+# Bracket k starts at r_min*η^(k-1) and always tops out at R: bracket 1 is the full ladder
+# (smallest starting budget, most rungs), bracket smax+1 is a single rung at R.
+_n_rungs(R::Int, r_min::Int, η::Int, k::Int) = _smax(R, r_min, η) + 2 - k
 function _capacity(R::Int, r_min::Int, η::Int, k::Int, i::Int)
     smax = _smax(R, r_min, η)
-    n0 = ceil(Int, (smax + 1) * η^(k - 1) / k)
+    n0 = ceil(Int, (smax + 1) * η^(smax + 1 - k) / _n_rungs(R, r_min, η, k))
     return max(1, floor(Int, n0 / η^(i - 1)))
 end
-_resource(R::Int, r_min::Int, η::Int, k::Int, i::Int) = r_min * η^(_smax(R, r_min, η) - k + i)
+_resource(::Int, r_min::Int, η::Int, k::Int, i::Int) = r_min * η^(k + i - 2)
 _at_rung(e, k::Int, i::Int) = get(e.metadata, :bracket_k, nothing) == k && get(e.metadata, :rung, nothing) == i
 _dispatched_count(runs, k::Int, i::Int) = count(e -> _at_rung(e, k, i), runs)
 _promoted_ids(runs, k::Int, i::Int) =
@@ -40,7 +43,7 @@ _pending_count(runs, k::Int, i::Int) = count(e -> e.status === Pending && _at_ru
 _rung_has_failure(runs, k::Int, i::Int) = any(e -> e.status === Failed && _at_rung(e, k, i), runs)
 function _total_trials(R::Int, r_min::Int, η::Int)
     smax = _smax(R, r_min, η)
-    return sum(_capacity(R, r_min, η, k, i) for k in 1:(smax+1) for i in 1:k)
+    return sum(_capacity(R, r_min, η, k, i) for k in 1:(smax+1) for i in 1:_n_rungs(R, r_min, η, k))
 end
 function _total_draws(R::Int, r_min::Int, η::Int)
     smax = _smax(R, r_min, η)
@@ -60,7 +63,8 @@ _promote(bracket::Int, rung::Int, promoted_from::Int) = SHDecision{:promote}(bra
 _wait() = SHDecision{:wait}(missing, missing, missing)
 _exhausted() = SHDecision{:exhausted}(missing, missing, missing)
 
-_fallback_bracket(s::SuccessiveHalving, k::Int, runs) = k > 1 ? _bracket_decision(s, k - 1, runs) : _exhausted()
+_fallback_bracket(s::SuccessiveHalving, k::Int, runs) =
+    k < _smax(s.R, s.r_min, s.η) + 1 ? _bracket_decision(s, k + 1, runs) : _exhausted()
 
 _propose(::SHDecision{:draw}, s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s, candidates, runs)
 _propose(d::SHDecision{:promote}, ::SuccessiveHalving, candidates, runs) = copy(runs[d.promoted_from].unit_params)
@@ -81,7 +85,7 @@ function _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, param
 end
 
 function (s::SuccessiveHalving)(candidates, runs)
-    return _propose(_bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs), s, candidates, runs)
+    return _propose(_bracket_decision(s, 1, runs), s, candidates, runs)
 end
 
 _sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
@@ -94,10 +98,10 @@ function init(s::SuccessiveHalving{Sync}, candidates, n) where {Sync}
     inner = init(s.inner, candidates, _total_draws(s.R, s.r_min, s.η))
     return SuccessiveHalving{Sync,typeof(inner)}(s.R, s.r_min, s.η, inner)
 end
-exhausted(s::SuccessiveHalving, ho) = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs) isa SHDecision{:exhausted}
-blocked(s::SuccessiveHalving, ho) = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs) isa SHDecision{:wait}
+exhausted(s::SuccessiveHalving, ho) = _bracket_decision(s, 1, ho.runs) isa SHDecision{:exhausted}
+blocked(s::SuccessiveHalving, ho) = _bracket_decision(s, 1, ho.runs) isa SHDecision{:wait}
 
 function create_run_entry(s::SuccessiveHalving, ho, id, params, unit_params)
-    action = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)
+    action = _bracket_decision(s, 1, ho.runs)
     return _entry_for(action, s, ho, id, params, unit_params)
 end

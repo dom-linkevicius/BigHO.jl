@@ -17,7 +17,8 @@ _n_promotable(s::SHAsync, runs, k::Int, i::Int) =
 # yet promoted, capped by Hyperband's static capacity. Rungs are independent -- no abandonment needed.
 function _bracket_decision(s::SHAsync, k::Int, runs)
     R, r_min, η = s.R, s.r_min, s.η
-    for i in (k-1):-1:1
+    n_rungs = _n_rungs(R, r_min, η, k)
+    for i in (n_rungs-1):-1:1
         promoted = _promoted_ids(runs, k, i)
         if length(promoted) < _n_promotable(s, runs, k, i)
             told = _told_sorted(runs, k, i)
@@ -28,15 +29,15 @@ function _bracket_decision(s::SHAsync, k::Int, runs)
     _dispatched_count(runs, k, 1) < _capacity(R, r_min, η, k, 1) && return _draw(k, 1)
     # Bottom rung full and nothing promotable: only conclusive once nothing's still in flight
     # anywhere in the bracket -- otherwise a pending trial could still make something promotable.
-    any(i -> _pending_count(runs, k, i) > 0, 1:k) && return _wait()
+    any(i -> _pending_count(runs, k, i) > 0, 1:n_rungs) && return _wait()
     return _fallback_bracket(s, k, runs)
 end
 
 # Whether bracket k can still draw or promote right now -- _bracket_decision's own local
-# conditions, without its recursive fall-through to bracket k-1 (a different bracket entirely).
+# conditions, without its recursive fall-through to bracket k+1 (a different bracket entirely).
 function _bracket_has_room(s::SHAsync, k::Int, runs)
     _dispatched_count(runs, k, 1) < _capacity(s.R, s.r_min, s.η, k, 1) && return true
-    return any(i -> length(_promoted_ids(runs, k, i)) < _n_promotable(s, runs, k, i), 1:(k-1))
+    return any(i -> length(_promoted_ids(runs, k, i)) < _n_promotable(s, runs, k, i), 1:(_n_rungs(s.R, s.r_min, s.η, k)-1))
 end
 
 # Whether rung i is resolved: dispatch finalized (own hard capacity reached, or rung below is
@@ -57,21 +58,22 @@ end
 function on_tell!(s::SHAsync, runs, entry)
     k = entry.metadata[:bracket_k]
     R, r_min, η = s.R, s.r_min, s.η
+    n_rungs = _n_rungs(R, r_min, η, k)
 
-    if all(i -> _pending_count(runs, k, i) == 0, 1:k) && !_bracket_has_room(s, k, runs)
-        total_capacity = sum(_capacity(R, r_min, η, k, i) for i in 1:k)
-        total_dispatched = sum(_dispatched_count(runs, k, i) for i in 1:k)
+    if all(i -> _pending_count(runs, k, i) == 0, 1:n_rungs) && !_bracket_has_room(s, k, runs)
+        total_capacity = sum(_capacity(R, r_min, η, k, i) for i in 1:n_rungs)
+        total_dispatched = sum(_dispatched_count(runs, k, i) for i in 1:n_rungs)
         total_dispatched < total_capacity && @warn "$(typeof(s)): bracket $k stalled at $total_dispatched/$total_capacity trials dispatched -- no rung can accept more"
     end
 
     # Warn once per rung that completes with a failure. `resolved_before` mirrors _rung_resolved's
     # own recursion, threaded through the loop -- entry's own rung starts false, each rung above inherits it.
     resolved_before = false
-    for i in entry.metadata[:rung]:k
+    for i in entry.metadata[:rung]:n_rungs
         if _rung_resolved(s, runs, k, i)
             resolved_before || _rung_has_failure(runs, k, i) && @warn "$(typeof(s)): rung $i of bracket $k completed with at least one failed trial"
         end
-        i == k && break
+        i == n_rungs && break
         resolved_before = _dispatched_count(runs, k, i + 1) >= _capacity(R, r_min, η, k, i + 1) ||
                           (resolved_before && _dispatched_count(runs, k, i + 1) >= _n_promotable(s, runs, k, i))
     end
