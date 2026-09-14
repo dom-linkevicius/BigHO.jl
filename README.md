@@ -71,19 +71,20 @@ To check that the samplers and executors actually deliver what they promise, the
 
 The comparison is set up as "same budget, who gets there first":
 - `Hyperband` and `ASHA` run their own one-pass bracket schedule (`R=1215`, `η=3`, `r_min=5`, giving 6 brackets), where one resource unit is 6 training epochs -- so a bottom-rung trial trains for 30 epochs and a top-rung one for 7290.
-- That schedule tries 415 distinct hyperparameter configurations and spends ~205k epochs in total, so `RandomSampler` is given exactly the same: 415 trials, with its per-trial epoch count set so its total matches. Neither sampler gets more compute than the other -- only the choice of how to spend it differs.
-- Every (sampler, executor) combination is repeated 10 times; the figure shows the median and interquartile range across those repeats.
+- That schedule tries 415 distinct hyperparameter configurations and spends ~205k epochs in total, so `RandomSampler` and `LHSampler` are given exactly the same: 415 trials, with their per-trial epoch count set so the totals match. No sampler gets more compute than another -- only the choice of how to spend it differs.
+- Every (sampler, executor) combination is repeated 30 times; the figure shows the median and interquartile range across those repeats.
 
 "Regret" is a run's best-validation-loss-so-far minus the best loss seen across every run in the benchmark, since the true optimum of this problem isn't known analytically.
 
 ![Wall-clock regret comparison](docs/benchmarks/wallclock_regret_comparison.png)
 
 What the figure shows:
-- `Hyperband` and `ASHA` reach any given regret level substantially sooner than `RandomSampler` at equal total budget, in both executors. Cheap early rungs let them discard bad configurations before paying full price for them, which is the entire point of successive halving.
-- `Threaded` completes the same work several times faster than `Serial` (the published run used 32 threads): ~8x for `RandomSampler` (257s → 32s per repeat), ~3.7x for `ASHA` (274s → 75s) and ~2.9x for `Hyperband` (267s → 92s). `RandomSampler` parallelizes best simply because all of its trials are independent, whereas the successive-halving samplers have to resolve rungs before they can promote -- and `ASHA` beats `Hyperband` here precisely because it doesn't wait for a whole rung to finish first.
-- All three converge to a similar final regret, which is expected: the advantage of successive halving is how quickly it gets to a good configuration, not a better ceiling.
+- `Hyperband` and `ASHA` reach any given regret level substantially sooner than the full-budget samplers at equal total budget, in both executors. Cheap early rungs let them discard bad configurations before paying full price for them, which is the entire point of successive halving.
+- `LHSampler` beats `RandomSampler` under `Serial`, holding a lower regret from ~1.5s to ~40s with barely overlapping interquartile ranges -- the space-filling design covers the space sooner than independent draws do. Under `Threaded` the two are indistinguishable: with 32 workers in flight, the order configurations are proposed in stops mattering.
+- `Threaded` completes the same work several times faster than `Serial` (the published run used 32 threads): ~10x for `RandomSampler` (353s → 35s per repeat) and `LHSampler` (339s → 34s), ~3.8x for `ASHA` (344s → 91s) and ~3.3x for `Hyperband` (349s → 106s). The full-budget samplers parallelize best simply because all of their trials are independent, whereas the successive-halving samplers have to resolve rungs before they can promote -- and `ASHA` beats `Hyperband` here precisely because it doesn't wait for a whole rung to finish first.
+- All four converge to a similar final regret, which is expected: the advantage of successive halving is how quickly it gets to a good configuration, not a better ceiling.
 
-You can find the benchmarking code in [`benchmarks/`](benchmarks/). The `LHSampler` was not included because under the current implementation it requires a large number of genetic algorithm generations to distribute the points well, and without them it behaves very similarly to a `RandomSampler`.
+You can find the benchmarking code in [`benchmarks/`](benchmarks/).
 
 ## Provenance
 

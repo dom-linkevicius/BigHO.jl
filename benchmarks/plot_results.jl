@@ -7,12 +7,12 @@ const OUTDIR = joinpath(@__DIR__, "..", "docs", "benchmarks")
 mkpath(OUTDIR)
 
 const REGRET_GRID_POINTS = 40
-const SAMPLER_NAMES = ("Random", "Hyperband", "ASHA")
+const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA")
 const SAMPLER_COLORS = Dict(zip(SAMPLER_NAMES, Makie.wong_colors()))
 const SHA_SAMPLER_NAMES = ("Hyperband", "ASHA")   # wrap an inner per-draw sampler, named in the legend
-const Y_UPPER_LIMIT = 10^-1.2   # headroom so the top-right legend doesn't occlude any lines
-const X_LOWER_LIMIT = 1e-1
-const X_UPPER_LIMIT = 1000
+const Y_UPPER_LIMIT = 0.11      # just above the highest band (0.099)
+const X_LOWER_LIMIT = 1e-1      # curves start once all repeats have reported, at ~0.19s
+const X_UPPER_LIMIT = 500       # slowest combo finishes at ~390s
 
 """
     _resample_to_grid(times, running_min, grid)

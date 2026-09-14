@@ -13,8 +13,8 @@ StableRNGs = "860ef19b-820b-49d6-a774-d7a799459cd3"
 BigHO = {path = ".."}
 
 [compat]
-AlgebraOfGraphics = "0.13.1"
-CairoMakie = "0.15.13"
-DataFrames = "1.8.2"
+AlgebraOfGraphics = "0.10"
+CairoMakie = "0.13"
+DataFrames = "1.7"
 Flux = "0.16"
 StableRNGs = "1"

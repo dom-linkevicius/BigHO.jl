@@ -10,22 +10,22 @@ _log(msg) = (println(msg); flush(stdout))
 const RESULTS_PATH = joinpath(@__DIR__, "results.jld2")
 
 const CANDIDATES = (
-    lr=Continuous(1e-3, 5e-2, 1e-3),
+    lr=Continuous(1e-3, 5e-2),
     n_dense_layers=Ordinal([1, 2, 3]),
     hidden=Ordinal([8, 16, 32, 64]),
     activation=Nominal([tanh, relu]),
-    reg=Continuous(0.0, 1e-2, 1e-3),
+    reg=Continuous(0.0, 1e-2),
 )
 
 const ETA = 3            # Hyperband/ASHA η (R comes from nn_objective.jl's R_MAX)
 
-# _total_draws counts fresh rung-1 draws only (not promotions), so Random tries the same number of
-# distinct configs as Hyperband/ASHA. BIGHO_BENCHMARK_REPEATS overrides the repeat count directly.
+# _total_draws counts fresh rung-1 draws only (not promotions), so Random and LHS try the same
+# number of distinct configs as Hyperband/ASHA. BIGHO_BENCHMARK_REPEATS overrides the repeats.
 const N_TRIALS = DEPLOY ? BigHO._total_draws(R_MAX, R_MIN, ETA) : 4
 const REGRET_REPEATS = parse(Int, get(ENV, "BIGHO_BENCHMARK_REPEATS", DEPLOY ? "10" : "2"))
 
-# Give Random the same total epoch budget as the bracket schedule: capacity per rung times the
-# INCREMENTAL resource, since warm-started promotions never re-pay earlier epochs.
+# Give the full-budget samplers the same total epoch budget as the bracket schedule: capacity per
+# rung times the INCREMENTAL resource, since warm-started promotions never re-pay earlier epochs.
 if DEPLOY
     smax = BigHO._smax(R_MAX, R_MIN, ETA)
     total_resource_units = sum(
@@ -35,13 +35,13 @@ if DEPLOY
     hyperband_total_epochs = total_resource_units * EPOCHS_PER_RESOURCE
     RANDOM_FULL_EPOCHS[] = round(Int, hyperband_total_epochs / N_TRIALS)
     random_total_epochs = RANDOM_FULL_EPOCHS[] * N_TRIALS
-    _log("Matched Random's per-trial epochs to Hyperband/ASHA's total budget: random_full_epochs=$(RANDOM_FULL_EPOCHS[]) random_total_epochs=$random_total_epochs hyperband_total_epochs=$hyperband_total_epochs")
+    _log("Matched Random/LHS per-trial epochs to Hyperband/ASHA's total budget: random_full_epochs=$(RANDOM_FULL_EPOCHS[]) random_total_epochs=$random_total_epochs hyperband_total_epochs=$hyperband_total_epochs")
 end
 
 const PLAIN_OBJ = Stateful(nn_objective)
 const SH_OBJ = Stateful(nn_objective_stateful)
 
-const SAMPLER_NAMES = ("Random", "Hyperband", "ASHA")
+const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA")
 const EXECUTORS = (Serial=Serial(), Threaded=Threaded())
 
 # Named rather than left to the constructors' default so it can be recorded in metadata for the legend.
@@ -49,6 +49,7 @@ const SHA_INNER = RandomSampler()
 
 const MAKE_HYPEROPTIMIZER = Dict(
     "Random" => () -> Hyperoptimizer(PLAIN_OBJ, CANDIDATES; sampler=RandomSampler(), n=N_TRIALS),
+    "LHS" => () -> Hyperoptimizer(PLAIN_OBJ, CANDIDATES; sampler=LHSampler(), n=N_TRIALS),
     "Hyperband" => () -> Hyperoptimizer(SH_OBJ, CANDIDATES, Hyperband(R=R_MAX, η=ETA, r_min=R_MIN, inner=SHA_INNER)),
     "ASHA" => () -> Hyperoptimizer(SH_OBJ, CANDIDATES, ASHA(R=R_MAX, η=ETA, r_min=R_MIN, inner=SHA_INNER)),
 )
@@ -58,8 +59,8 @@ const MAKE_HYPEROPTIMIZER = Dict(
 _log("Warming up (JIT compilation)...")
 const WARMUP_OBJ = Stateful(_warmup_objective)
 const WARMUP_SH_OBJ = Stateful(_warmup_objective_stateful)
-for executor in EXECUTORS
-    run!(Hyperoptimizer(WARMUP_OBJ, CANDIDATES; sampler=RandomSampler(), n=2); executor=executor, show_progress=false)
+for executor in EXECUTORS, sampler in (RandomSampler(), LHSampler())
+    run!(Hyperoptimizer(WARMUP_OBJ, CANDIDATES; sampler=sampler, n=2); executor=executor, show_progress=false)
 end
 for sh_sampler in (Hyperband(R=1, η=3, r_min=1), ASHA(R=1, η=3, r_min=1))
     run!(Hyperoptimizer(WARMUP_SH_OBJ, CANDIDATES, sh_sampler); executor=Serial(), show_progress=false)
