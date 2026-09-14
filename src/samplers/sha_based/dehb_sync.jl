@@ -77,7 +77,7 @@ end
 # On the outer sampler: only the schedule knows which budget a fresh draw belongs to.
 function _sample_sh_inner(s::DEHB, candidates, runs)
     de = s.inner
-    k = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs)[2]
+    k = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs).bracket
     budget = _resource(s.R, s.r_min, s.η, k, 1)
     budget == s.r_min && return rand(de.rng, length(candidates))
 
