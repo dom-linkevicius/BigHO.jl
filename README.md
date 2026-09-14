@@ -60,7 +60,7 @@ printmin(ho)     # best trial found so far
 DataFrame(ho)    # every trial (including any Failed ones), with its parameters and value
 
 using CairoMakie, AlgebraOfGraphics  # summaryplot needs both loaded to activate the extension
-summaryplot(ho)
+summaryplot(ho; figure_kwargs=(; size=(800, 400)))  # figure_kwargs/axis_kwargs/scatter_kwargs/histogram_kwargs/line_kwargs all pass through
 ```
 
 ![Sample summaryplot output](docs/sample_summaryplot.png)
