@@ -17,19 +17,6 @@ function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, inner::Sampl
     return SuccessiveHalving{Sync,typeof(inner)}(R, r_min, η, inner)
 end
 
-# What _bracket_decision decided. The kind is a type parameter so the consumers dispatch on it;
-# :promote is the widest case, so every kind carries its fields and the unused ones are `missing`.
-struct SHDecision{K}
-    bracket::Union{Int,Missing}
-    rung::Union{Int,Missing}
-    promoted_from::Union{Int,Missing}
-end
-
-_draw(bracket::Int, rung::Int) = SHDecision{:draw}(bracket, rung, missing)
-_promote(bracket::Int, rung::Int, promoted_from::Int) = SHDecision{:promote}(bracket, rung, promoted_from)
-_wait() = SHDecision{:wait}(missing, missing, missing)
-_exhausted() = SHDecision{:exhausted}(missing, missing, missing)
-
 # :r is stamped onto a trial's params at entry creation, never added to ho.candidates: the resource
 # level comes from the schedule, so it has no domain to sample and no unit coordinate to carry.
 _add_r(params::NamedTuple, r::Int) = merge((r=r,), params)
@@ -60,18 +47,42 @@ function _total_draws(R::Int, r_min::Int, η::Int)
     return sum(_capacity(R, r_min, η, k, 1) for k in 1:(smax+1))
 end
 
-# Shared across every SuccessiveHalving sampler -- only _sample_sh_inner is dispatched per type
-# (a future BOHB would override it instead of delegating to `inner`).
+# What _bracket_decision decided. The kind is a type parameter so the consumers dispatch on it;
+# :promote is the widest case, so every kind carries its fields and the unused ones are `missing`.
+struct SHDecision{K}
+    bracket::Union{Int,Missing}
+    rung::Union{Int,Missing}
+    promoted_from::Union{Int,Missing}
+end
+
+_draw(bracket::Int, rung::Int) = SHDecision{:draw}(bracket, rung, missing)
+_promote(bracket::Int, rung::Int, promoted_from::Int) = SHDecision{:promote}(bracket, rung, promoted_from)
+_wait() = SHDecision{:wait}(missing, missing, missing)
+_exhausted() = SHDecision{:exhausted}(missing, missing, missing)
+
+_fallback_bracket(s::SuccessiveHalving, k::Int, runs) = k > 1 ? _bracket_decision(s, k - 1, runs) : _exhausted()
+
+_propose(::SHDecision{:draw}, s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s, candidates, runs)
+_propose(d::SHDecision{:promote}, ::SuccessiveHalving, candidates, runs) = copy(runs[d.promoted_from].unit_params)
+_propose(::SHDecision{:wait}, s::SuccessiveHalving, candidates, runs) =
+    throw(ArgumentError("$(typeof(s)) has nothing to propose right now -- every bracket is waiting on trials that were asked but not yet told; `blocked` reports this"))
+_propose(::SHDecision{:exhausted}, s::SuccessiveHalving, candidates, runs) =
+    throw(ArgumentError("$(typeof(s)) has finished its one-pass schedule and can propose nothing further; `exhausted` reports this"))
+
+function _entry_for(d::SHDecision{:draw}, s::SuccessiveHalving, ho, id, params, unit_params)
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket, d.rung))
+    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung, :bracket_k => d.bracket))
+end
+
+function _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket, d.rung + 1))
+    metadata = Dict{Symbol,Any}(:rung => d.rung + 1, :bracket_k => d.bracket, :promoted_from => d.promoted_from)
+    return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[d.promoted_from].post_artefact)
+end
+
 function (s::SuccessiveHalving)(candidates, runs)
     return _propose(_bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs), s, candidates, runs)
 end
-
-_propose(::SHDecision{:draw}, s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s, candidates, runs)
-# A promotion re-proposes the promoted trial's own coordinate.
-_propose(d::SHDecision{:promote}, ::SuccessiveHalving, candidates, runs) = copy(runs[d.promoted_from].unit_params)
-
-# Shared terminal tail-call: fall back to the previous bracket, or declare exhausted.
-_fallback_bracket(s::SuccessiveHalving, k::Int, runs) = k > 1 ? _bracket_decision(s, k - 1, runs) : _exhausted()
 
 _sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
 _sample_sh_inner(inner::Sampler, candidates, runs) = inner(candidates, runs)
@@ -89,15 +100,4 @@ blocked(s::SuccessiveHalving, ho) = _bracket_decision(s, _smax(s.R, s.r_min, s.�
 function create_run_entry(s::SuccessiveHalving, ho, id, params, unit_params)
     action = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, ho.runs)
     return _entry_for(action, s, ho, id, params, unit_params)
-end
-
-function _entry_for(d::SHDecision{:draw}, s::SuccessiveHalving, ho, id, params, unit_params)
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket, d.rung))
-    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung, :bracket_k => d.bracket))
-end
-
-function _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket, d.rung + 1))
-    metadata = Dict{Symbol,Any}(:rung => d.rung + 1, :bracket_k => d.bracket, :promoted_from => d.promoted_from)
-    return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[d.promoted_from].post_artefact)
 end
