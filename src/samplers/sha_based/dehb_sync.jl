@@ -34,11 +34,9 @@ SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, F::Real
                                        rng::Random.AbstractRNG=StableRNG(1)) =
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
 
-function _subpop_size(s::DEHB, budget::Int)
-    smax = _smax(s.R, s.r_min, s.η)
-    return maximum(_capacity(s.R, s.r_min, s.η, k, i) for k in 1:(smax+1) for i in 1:k
-                   if _resource(s.R, s.r_min, s.η, k, i) == budget)
-end
+# §4.1: a budget's subpopulation is the most trials HB ever allocates to it -- that is the first
+# rung of the bracket starting there, since every later bracket reaches it only after halvings.
+_subpop_size(s::DEHB, budget::Int) = _capacity(s.R, s.r_min, s.η, _smax(budget, s.r_min, s.η) + 1, 1)
 
 function _next_slot(s::DEHB, runs, budget::Int)
     dispatched = count(e -> e.params.r == budget, runs)
@@ -62,35 +60,44 @@ end
 
 _occupants(slots) = Vector{Float64}[v for v in slots if v !== nothing]
 
-_global_pool(s::DEHB, runs) =
-    reduce(vcat, (_occupants(_subpopulation(s, runs, b))
-                  for b in (s.r_min * s.η^i for i in 0:_smax(s.R, s.r_min, s.η))); init=Vector{Float64}[])
+function _global_pool(s::DEHB, runs)
+    pool = Vector{Vector{Float64}}()
+    for i in 0:_smax(s.R, s.r_min, s.η)
+        budget = s.r_min * s.η^i
+        append!(pool, _occupants(_subpopulation(s, runs, budget)))
+    end
+    return pool
+end
 
 # DE/rand/1/bin, with `forced` guaranteeing the trial differs from its target somewhere.
 function _de_trial(s::DEHBSampler, target::Vector{Float64}, parents::Vector{Vector{Float64}})
     r1, r2, r3 = parents[randperm(s.rng, length(parents))[1:3]]
-    mutant = [0 <= v <= 1 ? v : rand(s.rng) for v in r1 .+ s.F .* (r2 .- r3)]
+    mutant = r1 .+ s.F .* (r2 .- r3)
+    out_of_range = .!(0 .<= mutant .<= 1)
+    mutant[out_of_range] .= rand(s.rng, count(out_of_range))  
     forced = rand(s.rng, eachindex(target))
-    return [(j == forced || rand(s.rng) < s.crossover) ? mutant[j] : target[j] for j in eachindex(target)]
+
+    cross = rand(s.rng, length(target)) .< s.crossover
+    cross[forced] = 1
+    return ifelse.(cross, mutant, target)
 end
 
 # On the outer sampler: only the schedule knows which budget a fresh draw belongs to.
 function _sample_sh_inner(s::DEHB, candidates, runs)
     de = s.inner
-    k = _bracket_decision(s, _smax(s.R, s.r_min, s.η) + 1, runs).bracket
+    k = _bracket_decision(s, 1, runs).bracket
     budget = _resource(s.R, s.r_min, s.η, k, 1)
     budget == s.r_min && return rand(de.rng, length(candidates))
 
     slots = _subpopulation(s, runs, budget)
     occupant = slots[_next_slot(s, runs, budget)]
-    target = occupant === nothing ? rand(de.rng, length(candidates)) : occupant
+    pool = _global_pool(s, runs)
+
+    ### the paper does not seem to mention what happens in the case where there aren't enough targets
+    ### whether to take from the same subpopulation, but not replace them or from global population
+    target = occupant === nothing ? rand(de.rng, pool) : occupant 
     parents = _occupants(slots)
-    if length(parents) < 3
-        parents = vcat(parents, _global_pool(s, runs))
-    end
-    while length(parents) < 3
-        push!(parents, rand(de.rng, length(candidates)))
-    end
+    append!(parents, rand(de.rng, pool, max(0, 3 - length(parents))))
     return _de_trial(de, target, parents)
 end
 
