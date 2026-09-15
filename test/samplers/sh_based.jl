@@ -111,9 +111,9 @@ end
     @test_throws ArgumentError Hyperoptimizer(p -> p.a, (r=Nominal([1]), a=Nominal([1])), Hyperband(R=9, η=3, r_min=1))
     @test_throws ArgumentError Hyperoptimizer(p -> p.a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1))
 
-    # n is fully determined by R/η/r_min -- passing it explicitly is rejected, not silently ignored.
-    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
-    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
+    # n is fully determined by R/η/r_min, so the constructor takes no keywords at all.
+    @test_throws MethodError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
+    @test_throws MethodError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
 
     # A trial that fails must never corrupt rung bookkeeping for the ones that succeed.
     n_calls = Ref(0)
@@ -190,7 +190,7 @@ end
 @testset "Hyperband rung-level failure handling (shrinkage/abandonment)" begin
     @info "Testing Hyperband's promote-fewer-than-planned and abandon-on-total-wipeout logic"
 
-    # R=9, η=3, r_min=1 -> bracket 3 has capacities rung1=9, rung2=3, rung3=1 (see _capacity).
+    # R=9, η=3, r_min=1 -> bracket 1 has capacities rung1=9, rung2=3, rung3=1 (see _capacity).
     s = Hyperband(R=9, η=3, r_min=1)
 
     function rung1_entries(k, n_total, n_failed)
@@ -206,28 +206,28 @@ end
 
     # Shortfall: 7/9 rung-1 trials fail -- only 2 completed, so only 2 (not the planned
     # min(η, ...)=3) are ever promoted, with a warning fired exactly once at the resolving tell!.
-    runs = rung1_entries(3, 9, 7)
+    runs = rung1_entries(1, 9, 7)
     logs, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, runs, runs[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("promoting fewer than planned", l.message), logs) == 1
-    @test BigHO._bracket_decision(s, 3, runs) == (:promote, 3, 1, 8) # best of the 2 completed (id=8, value 8.0 < id=9's 9.0)
+    @test BigHO._bracket_decision(s, 1, runs) == BigHO._promote(1, 1, 8) # best of the 2 completed (id=8, value 8.0 < id=9's 9.0)
 
     # Promote both survivors -- once the shrunk target (2, not 3) is reached, the bracket must
     # move on to rung 2's own state, not keep waiting for a 3rd promotion that will never come.
-    push!(runs, BigHO.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket_k => 3)))
-    @test BigHO._bracket_decision(s, 3, runs) == (:promote, 3, 1, 9)
-    push!(runs, BigHO.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket_k => 3)))
-    @test BigHO._bracket_decision(s, 3, runs) == (:wait,) # both Pending now, not stuck asking for a nonexistent 3rd
+    push!(runs, BigHO.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket_k => 1)))
+    @test BigHO._bracket_decision(s, 1, runs) == BigHO._promote(1, 1, 9)
+    push!(runs, BigHO.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket_k => 1)))
+    @test BigHO._bracket_decision(s, 1, runs) == BigHO._wait() # both Pending now, not stuck asking for a nonexistent 3rd
 
     # Total wipeout: every rung-1 trial fails -- the bracket is abandoned (warned once) and
     # control moves to bracket 2's own fresh draw, instead of blocking forever.
-    wiped = rung1_entries(3, 9, 9)
+    wiped = rung1_entries(1, 9, 9)
     logs2, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, wiped, wiped[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("abandoning bracket", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s, 3, wiped) == (:draw, 2)
+    @test BigHO._bracket_decision(s, 1, wiped) == BigHO._draw(2, 1)
 
     # End-to-end through run!, under both Serial and Threaded: failures depend only on the candidate
     # value (never on dispatch order or timing) and ask! is serialized, so both executors see the
@@ -269,7 +269,7 @@ end
 @testset "ASHA rung-level failure handling (bracket-stall/rung-failure warnings)" begin
     @info "Testing ASHA's on_tell! bracket-stalled and rung-completed-with-failure warnings"
 
-    # R=9, η=3, r_min=1 -> bracket 3 has capacities rung1=9, rung2=3, rung3=1 (see _capacity).
+    # R=9, η=3, r_min=1 -> bracket 1 has capacities rung1=9, rung2=3, rung3=1 (see _capacity).
     s = ASHA(R=9, η=3, r_min=1)
 
     function rung1_entries(k, n_total, n_failed)
@@ -285,7 +285,7 @@ end
 
     # 1 failed, 8 completed: rung 1 finishes at full capacity (9) with a failure present, but
     # there's still room to promote from the 8 survivors -- only the per-rung warning fires.
-    partial = rung1_entries(3, 9, 1)
+    partial = rung1_entries(1, 9, 1)
     logs1, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, partial, partial[end])
     end
@@ -294,13 +294,13 @@ end
 
     # Total wipeout: every rung-1 trial fails -- nothing can ever be promoted, so the bracket
     # stalls short of its full plan (13 = 9+3+1) AND rung 1 itself completed with failures.
-    wiped = rung1_entries(3, 9, 9)
+    wiped = rung1_entries(1, 9, 9)
     logs2, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, wiped, wiped[end])
     end
-    @test count(l -> l.level == Logging.Warn && occursin("bracket 3 stalled at 9/13", l.message), logs2) == 1
-    @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 3 completed with at least one failed trial", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s, 3, wiped) == (:draw, 2) # moves on to bracket 2, doesn't block forever
+    @test count(l -> l.level == Logging.Warn && occursin("bracket 1 stalled at 9/13", l.message), logs2) == 1
+    @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 1 completed with at least one failed trial", l.message), logs2) == 1
+    @test BigHO._bracket_decision(s, 1, wiped) == BigHO._draw(2, 1) # moves on to bracket 2, doesn't block forever
 
     # End-to-end through run!, under both Serial and Threaded: same value-keyed failure rule as
     # Hyperband's own failure test. Unlike Hyperband, ASHA promotes off whatever is told SO FAR, so
