@@ -111,9 +111,9 @@ end
     @test_throws ArgumentError Hyperoptimizer(p -> p.a, (r=Nominal([1]), a=Nominal([1])), Hyperband(R=9, η=3, r_min=1))
     @test_throws ArgumentError Hyperoptimizer(p -> p.a, (r=Nominal([1]), a=Nominal([1])), ASHA(R=9, η=3, r_min=1))
 
-    # n is fully determined by R/η/r_min -- passing it explicitly is rejected, not silently ignored.
-    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
-    @test_throws ArgumentError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
+    # n is fully determined by R/η/r_min, so the constructor takes no keywords at all.
+    @test_throws MethodError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), Hyperband(R=9, η=3, r_min=1); n=5)
+    @test_throws MethodError Hyperoptimizer(p -> p.a, (a=Nominal([1]),), ASHA(R=9, η=3, r_min=1); n=5)
 
     # A trial that fails must never corrupt rung bookkeeping for the ones that succeed.
     n_calls = Ref(0)
