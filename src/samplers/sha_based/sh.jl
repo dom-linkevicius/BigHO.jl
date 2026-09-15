@@ -45,7 +45,7 @@ struct BracketId
 end
 _label(k::BracketId) = "bracket $(k.index) of iteration $(k.iteration)"
 
-_at_rung(e, k::BracketId, i::Int) = get(e.metadata, :bracket, nothing) == k && get(e.metadata, :rung, nothing) == i
+_at_rung(e, k::BracketId, i::Int) = e.metadata[:bracket] == k && e.metadata[:rung] == i
 _dispatched_count(runs, k::BracketId, i::Int) = count(e -> _at_rung(e, k, i), runs)
 _promoted_ids(runs, k::BracketId, i::Int) =
     Set(e.metadata[:promoted_from] for e in runs if _at_rung(e, k, i + 1))
@@ -110,7 +110,7 @@ _sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.in
 _sample_sh_inner(inner::Sampler, candidates, runs) = inner(candidates, runs)
 # LHSampler is row-indexed off length(runs) -- needs only fresh (never-promoted) draws so its
 # row index stays aligned with the design it was built for, not inflated by promotions.
-_sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(e -> get(e.metadata, :rung, nothing) == 1, runs))
+_sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(e -> e.metadata[:rung] == 1, runs))
 
 function init(s::SuccessiveHalving{Sync}, candidates, n) where {Sync}
     inner = init(s.inner, candidates, _total_draws(s))
