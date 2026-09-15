@@ -45,7 +45,7 @@ struct ObjectiveOutcome
     post_artefact::Any
 end
 function finalize_entry(entry::RunEntry, outcome::ObjectiveOutcome)
-    told = finalize_entry(entry, outcome.value) # reuses whichever method matches value's type (Real -> NaN check, or the non-Real fallback)
+    told = finalize_entry(entry, outcome.value)
     return _with_result(told, told.status, told.value, outcome.post_artefact; error=told.error)
 end
 

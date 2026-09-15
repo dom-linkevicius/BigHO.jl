@@ -6,21 +6,13 @@ using StableRNGs: StableRNG
 using Random: shuffle
 using LinearAlgebra: BLAS
 
-# Threaded() is the outer parallelism -- BLAS threads on top of it oversubscribe the cores and
-# make Threaded() slower than Serial().
 BLAS.set_num_threads(1)
 
-# Dev (default): ~10s per full-budget training run, so compute dominates dispatch overhead.
-# Deploy (BIGHO_BENCHMARK_DEPLOY=true, set by the CI workflow): same shape, longer ladder.
 const DEPLOY = get(ENV, "BIGHO_BENCHMARK_DEPLOY", "false") == "true"
-const R_MIN = DEPLOY ? 5 : 1      # bottom resource level, in resource UNITS
-const R_MAX = DEPLOY ? 1215 : 27   # top resource level; 1215 = 5*3^5, an exact η=3 ladder from R_MIN
-# One resource unit is this many real epochs -- the rung math stays in units, only the training
-# scales. Set so the bottom rung trains a meaningful number of epochs (deploy: 5*6=30).
+const R_MIN = DEPLOY ? 5 : 1
+const R_MAX = DEPLOY ? 1215 : 27
 const EPOCHS_PER_RESOURCE = DEPLOY ? 6 : 250
 
-# Overridden by collect_results.jl once N_TRIALS is known, to match Random's total epochs to
-# Hyperband/ASHA's -- theirs is fixed by the bracket schedule, so it can't be derived from R_MAX.
 const RANDOM_FULL_EPOCHS = Ref(round(Int, R_MAX * EPOCHS_PER_RESOURCE))
 const BATCHSIZE = 32
 
@@ -64,7 +56,6 @@ function make_dataset(; seed::Int=1)
     train_idx, val_idx = perm[1:n_train], perm[n_train+1:end]
 
     X = _build_features(df)
-    # Standardize the numeric rows (2,7,8,9 are already 0/1) on train-set statistics only.
     numeric_rows = (1, 3, 4, 5, 6)
     mu = mean(X[collect(numeric_rows), train_idx]; dims=2)
     sigma = std(X[collect(numeric_rows), train_idx]; dims=2)
@@ -100,8 +91,6 @@ end
 function _train_epochs!(model, opt_state, epochs::Int)
     data = Flux.DataLoader((DATASET.Xtrain, DATASET.ytrain_onehot); batchsize=BATCHSIZE, shuffle=true)
     for _ in 1:epochs
-        # gc_interval=0 disables Flux's paced GC: it's for GPU buffers, and under Threaded() each
-        # trial's GC.gc() stalls every other thread at a safepoint (measured slower than Serial()).
         Flux.train!(_loss, model, data, opt_state; gc_interval=0)
     end
     return model

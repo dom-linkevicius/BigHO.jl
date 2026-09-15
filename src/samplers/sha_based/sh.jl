@@ -1,11 +1,9 @@
-# Hyperband and ASHA share this exact shape (Sync=true/false picks _bracket_decision). Immutable --
-# bracket/rung state is derived fresh from `runs` each time, nothing cached.
 struct SuccessiveHalving{Sync,S<:Sampler} <: Sampler
     R::Int
     r_min::Int
     η::Int
-    iterations::Int # how many times the whole bracket schedule is replayed
-    inner::S # draws fresh bottom-rung candidates -- any Sampler, e.g. RandomSampler (default) or LHSampler
+    iterations::Int
+    inner::S
 end
 function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, iterations::Int=1,
                                  inner::Sampler=RandomSampler()) where {Sync}
@@ -20,15 +18,9 @@ function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, iterations::
     return SuccessiveHalving{Sync,typeof(inner)}(R, r_min, η, iterations, inner)
 end
 
-# :r is stamped onto a trial's params at entry creation, never added to ho.candidates: the resource
-# level comes from the schedule, so it has no domain to sample and no unit coordinate to carry.
 _add_r(params::NamedTuple, r::Int) = merge((r=r,), params)
 
-# ndigits(n;base) computes ⌊log_base(n)⌋ exactly (no floating-point log, unlike floor(log(R/r_min)/log(η))
-# which misrounds on exact powers of η). R÷r_min is safe here since floor is monotonic.
 _smax(R::Int, r_min::Int, η::Int) = ndigits(R ÷ r_min; base=η) - 1
-# Bracket k starts at r_min*η^(k-1) and always tops out at R: bracket 1 is the full ladder
-# (smallest starting budget, most rungs), bracket smax+1 is a single rung at R.
 _n_rungs(R::Int, r_min::Int, η::Int, k::Int) = _smax(R, r_min, η) + 2 - k
 function _capacity(R::Int, r_min::Int, η::Int, k::Int, i::Int)
     smax = _smax(R, r_min, η)
@@ -37,8 +29,6 @@ function _capacity(R::Int, r_min::Int, η::Int, k::Int, i::Int)
 end
 _resource(::Int, r_min::Int, η::Int, k::Int, i::Int) = r_min * η^(k + i - 2)
 
-# Which bracket of which iteration a trial belongs to. An iteration replays the whole smax+1
-# bracket schedule, so `index` alone is ambiguous once `iterations > 1`.
 struct BracketId
     iteration::Int
     bracket::Int
@@ -64,8 +54,6 @@ end
 _total_trials(s::SuccessiveHalving) = s.iterations * _total_trials(s.R, s.r_min, s.η)
 _total_draws(s::SuccessiveHalving) = s.iterations * _total_draws(s.R, s.r_min, s.η)
 
-# What _bracket_decision decided. The kind is a type parameter so the consumers dispatch on it;
-# :promote is the widest case, so every kind carries its fields and the unused ones are `missing`.
 struct SHDecision{K}
     bracket_id::Union{BracketId,Missing}
     rung::Union{Int,Missing}
@@ -77,7 +65,6 @@ _promote(bracket_id::BracketId, rung::Int, promoted_from::Int) = SHDecision{:pro
 _wait() = SHDecision{:wait}(missing, missing, missing)
 _exhausted() = SHDecision{:exhausted}(missing, missing, missing)
 
-# Falls through to the next bracket, then to the next iteration's first bracket, then gives up.
 function _fallback_bracket(s::SuccessiveHalving, k::BracketId, runs)
     k.bracket < _smax(s.R, s.r_min, s.η) + 1 && return _bracket_decision(s, BracketId(k.iteration, k.bracket + 1), runs)
     k.iteration < s.iterations && return _bracket_decision(s, BracketId(k.iteration + 1, 1), runs)
@@ -108,8 +95,6 @@ end
 
 _sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
 _sample_sh_inner(inner::Sampler, candidates, runs) = inner(candidates, runs)
-# LHSampler is row-indexed off length(runs) -- needs only fresh (never-promoted) draws so its
-# row index stays aligned with the design it was built for, not inflated by promotions.
 _sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(e -> e.metadata[:rung] == 1, runs))
 
 function init(s::SuccessiveHalving{Sync}, candidates, n) where {Sync}

@@ -9,8 +9,6 @@ SuccessiveHalving{true,<:BasicSamplers}(; R::Int, η::Int=3, r_min::Int=1, itera
                                         inner::BasicSamplers=RandomSampler()) =
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, iterations=iterations, inner=inner)
 
-# Walks brackets 1..smax+1 in order; a bracket is done for good once its top rung resolves, never revisited.
-# Pure (never calls `inner`) so exhausted/blocked/create_run_entry can safely re-derive it.
 function _bracket_decision(s::SHSync, k::BracketId, runs)
     R, r_min, η = s.R, s.r_min, s.η
     n_rungs = _n_rungs(R, r_min, η, k.bracket)
@@ -27,8 +25,6 @@ function _bracket_decision(s::SHSync, k::BracketId, runs)
     return _fallback_bracket(s, k, runs)
 end
 
-# Whether rung i is done: fully dispatched (possibly shrunk by failures) and nothing Pending.
-# Rung 1's target is fixed; i>1's target is capped by how many rung i-1 actually delivered.
 function _rung_resolved(s::SHSync, runs, k::BracketId, i::Int)
     R, r_min, η = s.R, s.r_min, s.η
     if i == 1
@@ -40,12 +36,10 @@ function _rung_resolved(s::SHSync, runs, k::BracketId, i::Int)
     return _dispatched_count(runs, k, i) >= target && _pending_count(runs, k, i) == 0
 end
 
-# Warns exactly once per rung, at the tell! that empties its last Pending entry. Relies on
-# _rung_resolved's upstream-first precondition, which only Hyperband's dispatch pattern guarantees.
 function on_tell!(s::SHSync, runs, entry)
     k = entry.metadata[:bracket]
     i = entry.metadata[:rung]
-    i < _n_rungs(s.R, s.r_min, s.η, k.bracket) || return nothing # top rung: no promotion decision is ever made from here
+    i < _n_rungs(s.R, s.r_min, s.η, k.bracket) || return nothing
     _rung_resolved(s, runs, k, i) || return nothing
     told = _told_sorted(runs, k, i)
     if isempty(told)

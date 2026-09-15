@@ -9,13 +9,9 @@ SuccessiveHalving{false,<:BasicSamplers}(; R::Int, η::Int=3, r_min::Int=1, iter
                                          inner::BasicSamplers=RandomSampler()) =
     SuccessiveHalving{false}(; R=R, η=η, r_min=r_min, iterations=iterations, inner=inner)
 
-# How many rung-i trials are eligible for promotion into rung i+1 -- top ⌊told/η⌋, capped by
-# rung i+1's own static capacity.
 _n_promotable(s::SHAsync, runs, k::BracketId, i::Int) =
     min(floor(Int, length(_told_sorted(runs, k, i)) / s.η), _capacity(s.R, s.r_min, s.η, k.bracket, i + 1))
 
-# Per Li et al. 2020's get_job(): scan rungs top-down for a trial in the top 1/η told so far, not
-# yet promoted, capped by Hyperband's static capacity. Rungs are independent -- no abandonment needed.
 function _bracket_decision(s::SHAsync, k::BracketId, runs)
     R, r_min, η = s.R, s.r_min, s.η
     n_rungs = _n_rungs(R, r_min, η, k.bracket)
@@ -28,21 +24,15 @@ function _bracket_decision(s::SHAsync, k::BracketId, runs)
         end
     end
     _dispatched_count(runs, k, 1) < _capacity(R, r_min, η, k.bracket, 1) && return _draw(k, 1)
-    # Bottom rung full and nothing promotable: only conclusive once nothing's still in flight
-    # anywhere in the bracket -- otherwise a pending trial could still make something promotable.
     any(i -> _pending_count(runs, k, i) > 0, 1:n_rungs) && return _wait()
     return _fallback_bracket(s, k, runs)
 end
 
-# Whether bracket k can still draw or promote right now -- _bracket_decision's own local
-# conditions, without its recursive fall-through to bracket k+1 (a different bracket entirely).
 function _bracket_has_room(s::SHAsync, k::BracketId, runs)
     _dispatched_count(runs, k, 1) < _capacity(s.R, s.r_min, s.η, k.bracket, 1) && return true
     return any(i -> length(_promoted_ids(runs, k, i)) < _n_promotable(s, runs, k, i), 1:(_n_rungs(s.R, s.r_min, s.η, k.bracket)-1))
 end
 
-# Whether rung i is resolved: dispatch finalized (own hard capacity reached, or rung below is
-# resolved) and nothing still Pending.
 function _rung_resolved(s::SHAsync, runs, k::BracketId, i::Int)
     dispatch_final = if _dispatched_count(runs, k, i) >= _capacity(s.R, s.r_min, s.η, k.bracket, i)
         true
@@ -54,8 +44,6 @@ function _rung_resolved(s::SHAsync, runs, k::BracketId, i::Int)
     return dispatch_final && _pending_count(runs, k, i) == 0
 end
 
-# Warn once when a bracket stalls short of plan -- nothing pending, no rung can accept more.
-# One-time transition (pending only decreases), so this fires exactly once.
 function on_tell!(s::SHAsync, runs, entry)
     k = entry.metadata[:bracket]
     R, r_min, η = s.R, s.r_min, s.η
@@ -67,8 +55,6 @@ function on_tell!(s::SHAsync, runs, entry)
         total_dispatched < total_capacity && @warn "$(typeof(s)): $(_label(k)) stalled at $total_dispatched/$total_capacity trials dispatched -- no rung can accept more"
     end
 
-    # Warn once per rung that completes with a failure. `resolved_before` mirrors _rung_resolved's
-    # own recursion, threaded through the loop -- entry's own rung starts false, each rung above inherits it.
     resolved_before = false
     for i in entry.metadata[:rung]:n_rungs
         if _rung_resolved(s, runs, k, i)

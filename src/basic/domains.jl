@@ -46,8 +46,6 @@ struct Continuous{F} <: Domain
     transform::F
     function Continuous{F}(lo::Float64, hi::Float64, transform::F) where {F}
         hi > lo || throw(ArgumentError("max ($hi) must be greater than min ($lo)"))
-        # Endpoints only: a grid of any size can step over a pole, so sampling the interior
-        # wouldn't establish anything it doesn't already.
         (isfinite(transform(lo)) && isfinite(transform(hi))) ||
             throw(ArgumentError("transform must be finite at both ends of [$lo, $hi]; got non-finite values"))
         return new{F}(lo, hi, transform)

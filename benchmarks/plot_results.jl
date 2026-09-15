@@ -9,10 +9,10 @@ mkpath(OUTDIR)
 const REGRET_GRID_POINTS = 40
 const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA")
 const SAMPLER_COLORS = Dict(zip(SAMPLER_NAMES, Makie.wong_colors()))
-const SHA_SAMPLER_NAMES = ("Hyperband", "ASHA")   # wrap an inner per-draw sampler, named in the legend
-const Y_UPPER_LIMIT = 0.11      # just above the highest band (0.099)
-const X_LOWER_LIMIT = 1e-1      # curves start once all repeats have reported, at ~0.19s
-const X_UPPER_LIMIT = 500       # slowest combo finishes at ~390s
+const SHA_SAMPLER_NAMES = ("Hyperband", "ASHA")
+const Y_UPPER_LIMIT = 0.11
+const X_LOWER_LIMIT = 1e-1
+const X_UPPER_LIMIT = 500
 
 """
     _resample_to_grid(times, running_min, grid)
@@ -29,21 +29,15 @@ function _resample_to_grid(times, running_min, grid)
     return out
 end
 
-# One row per executor: 8 overlapping lines/bands on one axis was unreadable. Both rows share axis
-# limits and colors. Re-runnable on its own -- the curves come from collect_results.jl's results.jld2.
 function plot_results(runs, metadata)
     regret_repeats = metadata.regret_repeats
     all_values = Float64[e for curves in values(runs) for (_, best) in curves for e in best]
     global_best = minimum(all_values)
 
-    # Precompute each (sampler, executor)'s own grid/regret/band once, and track the combined
-    # data extent so both rows can share identical axis limits.
     computed = Dict{Tuple{String,Symbol},NamedTuple}()
     ymin = Inf
     for name in SAMPLER_NAMES, ex_name in (:Serial, :Threaded)
         curves = runs[(name, ex_name)]
-        # Own x-range per combo, not a shared one: a shared endpoint holds a fast combo's line flat
-        # out to the slowest one's finish, implying it kept running when it had long since stopped.
         own_min = minimum(times[1] for (times, _) in curves if !isempty(times))
         own_max = maximum(times[end] for (times, _) in curves if !isempty(times))
         grid = exp10.(range(log10(own_min), log10(own_max); length=REGRET_GRID_POINTS))
@@ -51,8 +45,6 @@ function plot_results(runs, metadata)
         for (r, (times, best)) in enumerate(curves)
             curves_on_grid[r, :] = _resample_to_grid(times, best, grid)
         end
-        # Median + 25/75 band, not mean+-std: std is symmetric and one outlier repeat widens it
-        # enough to bury the lines in shading.
         regret = [any(isnan, col) ? NaN : max(median(col) - global_best, 1e-4) for col in eachcol(curves_on_grid)]
         lower = [any(isnan, col) ? NaN : max(quantile(col, 0.25) - global_best, 1e-4) for col in eachcol(curves_on_grid)]
         upper = [any(isnan, col) ? NaN : max(quantile(col, 0.75) - global_best, 1e-4) for col in eachcol(curves_on_grid)]
@@ -80,8 +72,6 @@ function plot_results(runs, metadata)
         ylims!(ax, ymin, Y_UPPER_LIMIT)
         legend_source = ax
     end
-    # Both rows plot the same four series, so one shared legend above them and one ylabel beside
-    # them, rather than a copy per axis.
     Label(fig[1:2, 0], "regret (best validation loss - global best)"; rotation=pi / 2, tellheight=false)
     Legend(fig[0, 1], legend_source; orientation=:horizontal, nbanks=1)
     save(joinpath(OUTDIR, "wallclock_regret_comparison.png"), fig)

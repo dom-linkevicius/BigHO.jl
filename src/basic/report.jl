@@ -26,8 +26,6 @@ function minimizer(ho::Hyperoptimizer)
     return collect(ho.runs[ho.best_min_id].params)
 end
 
-# Continuous has bounds while the discrete kinds have values, so there's no shared shape to
-# summarize -- dispatch on the domain type instead.
 _domain_summary(d::Continuous) = "[$(d.min), $(d.max)]" * (d.transform === identity ? "" : " via $(d.transform)")
 _domain_summary(d::Union{Nominal,Ordinal}) = length(d) <= 5 ? string(d.values) : "length: $(length(d))"
 
@@ -56,8 +54,6 @@ function _show_optimum(io::IO, ho::Hyperoptimizer, ::Int)
     println(io)
 end
 
-# Named off the winning entry, not ho.params: a sampler may stamp params of its own (Hyperband's
-# `:r`), so the entry can be wider than ho.candidates.
 _minimizer_names(ho::Hyperoptimizer) = keys(ho.runs[ho.best_min_id].params)
 
 _print_value(io::IO, v::Number) = @printf(io, "%9.4g ", v)
@@ -68,9 +64,8 @@ _print_value(io::IO, v) = @printf(io, "%9s ", v)
 """
 printmin(ho::Hyperoptimizer) = printmin(stdout, ho)
 function printmin(io::IO, ho::Hyperoptimizer)
-    mzer = minimizer(ho) # first, so an empty ho throws minimizer's own error rather than indexing on `nothing`
+    mzer = minimizer(ho)
     for (param, value) in zip(_minimizer_names(ho), mzer)
         println(io, param, " = ", value)
     end
 end
-

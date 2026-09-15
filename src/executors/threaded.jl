@@ -8,7 +8,6 @@ mutable struct Threaded <: AbstractExecutor
     pending_exception::Union{Exception,Nothing}
     tasks::Vector{Task}
 
-    # Suppresses the default positional constructor, which would bypass validation below.
     function Threaded(max_concurrency::Int, results::Channel{Tuple{RunEntry,Any}}, in_flight::Int, pending_exception::Union{Exception,Nothing}, tasks::Vector{Task})
         max_concurrency >= 1 || throw(ArgumentError("max_concurrency must be >= 1, got $max_concurrency"))
         return new(max_concurrency, results, in_flight, pending_exception, tasks)
@@ -41,7 +40,6 @@ end
 function submit!(executor::Threaded, entry::RunEntry, f)
     executor.in_flight += 1
     t = Threads.@spawn begin
-        # Resolved BEFORE the single put! below, so a failure in put! itself can't overwrite a valid result.
         outcome = try
             safe_call(f, entry.params, entry.pre_artefact)
         catch e
@@ -54,7 +52,6 @@ function submit!(executor::Threaded, entry::RunEntry, f)
     return nothing
 end
 
-# Takes one result into out, unless it's an InterruptException (stashed on pending_exception instead).
 function _take_one!(executor::Threaded, out)
     entry, outcome = take!(executor.results)
     executor.in_flight -= 1
@@ -66,12 +63,9 @@ function _take_one!(executor::Threaded, out)
     return out
 end
 
-# Blocks for the first result only if something's in flight; drains any others already ready.
 function poll(executor::Threaded)
-    # Deferred to the NEXT call so this call's own already-collected `out` isn't discarded.
     executor.pending_exception !== nothing && throw(executor.pending_exception)
     executor.in_flight == 0 && return Tuple{RunEntry,Any}[]
-    # Explicitly typed -- inferring from the first result can error if a later one has a different type.
     out = _take_one!(executor, Tuple{RunEntry,Any}[])
     while executor.in_flight > 0 && isready(executor.results)
         _take_one!(executor, out)

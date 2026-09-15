@@ -3,8 +3,6 @@ using JLD2
 
 include("nn_objective.jl")
 
-# @info is buffered when stdout is redirected to a file (the CI log), so a long run shows nothing
-# until it exits -- println+flush prints immediately.
 _log(msg) = (println(msg); flush(stdout))
 
 const RESULTS_PATH = joinpath(@__DIR__, "results.jld2")
@@ -17,15 +15,11 @@ const CANDIDATES = (
     reg=Continuous(0.0, 1e-2),
 )
 
-const ETA = 3            # Hyperband/ASHA η (R comes from nn_objective.jl's R_MAX)
+const ETA = 3
 
-# _total_draws counts fresh rung-1 draws only (not promotions), so Random and LHS try the same
-# number of distinct configs as Hyperband/ASHA. BIGHO_BENCHMARK_REPEATS overrides the repeats.
 const N_TRIALS = DEPLOY ? BigHO._total_draws(R_MAX, R_MIN, ETA) : 4
 const REGRET_REPEATS = parse(Int, get(ENV, "BIGHO_BENCHMARK_REPEATS", DEPLOY ? "10" : "2"))
 
-# Give the full-budget samplers the same total epoch budget as the bracket schedule: capacity per
-# rung times the INCREMENTAL resource, since warm-started promotions never re-pay earlier epochs.
 if DEPLOY
     smax = BigHO._smax(R_MAX, R_MIN, ETA)
     total_resource_units = sum(
@@ -44,7 +38,6 @@ const SH_OBJ = Stateful(nn_objective_stateful)
 const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA")
 const EXECUTORS = (Serial=Serial(), Threaded=Threaded())
 
-# Named rather than left to the constructors' default so it can be recorded in metadata for the legend.
 const SHA_INNER = RandomSampler()
 
 const MAKE_HYPEROPTIMIZER = Dict(
@@ -54,8 +47,6 @@ const MAKE_HYPEROPTIMIZER = Dict(
     "ASHA" => () -> Hyperoptimizer(SH_OBJ, CANDIDATES, ASHA(R=R_MAX, η=ETA, r_min=R_MIN, inner=SHA_INNER)),
 )
 
-# Absorb JIT cost up front, or whichever executor runs first carries it. Uses the 1-epoch warmup
-# objectives -- the real ones have their epoch count baked in and would cost full deploy scale.
 _log("Warming up (JIT compilation)...")
 const WARMUP_OBJ = Stateful(_warmup_objective)
 const WARMUP_SH_OBJ = Stateful(_warmup_objective_stateful)
@@ -83,8 +74,6 @@ function _running_min_curve(pairs)
     return times, best
 end
 
-# Wall-clock regret comparison (BOHB paper, Fig. 1 style): every sampler under both executors,
-# REGRET_REPEATS times each. Saves only the (times, best-so-far) curves, never the trained models.
 function collect_results()
     runs = Dict((name, ex) => Tuple{Vector{Float64},Vector{Float64}}[] for name in SAMPLER_NAMES, ex in keys(EXECUTORS))
     total_combos = REGRET_REPEATS * length(EXECUTORS) * length(SAMPLER_NAMES)

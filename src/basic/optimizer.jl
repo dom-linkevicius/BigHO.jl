@@ -38,7 +38,6 @@ end
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving)
     haskey(candidates, :r) &&
         throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
-    # `nothing` is exempt: there's no objective to wrap, so the warning would have nothing to act on.
     objective isa Stateful || objective === nothing || @warn "$(typeof(sampler)) with a non-Stateful objective: promoted trials can't " *
                                                              "resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- " *
                                                              "wrap the objective in `Stateful` to make promotions continue instead of restart"
@@ -48,7 +47,6 @@ end
 
 reached_target(ho::Hyperoptimizer) = length(ho.runs) >= ho.n
 
-# Trials ever told an outcome, regardless of how many run! calls it took -- used for save_every's cadence.
 n_told(ho::Hyperoptimizer) = length(ho.runs) - ho.n_pending
 
 """
@@ -80,7 +78,7 @@ function ask!(ho::Hyperoptimizer)
         unit_params = ho.sampler(ho.candidates, ho.runs)
         id = length(ho.runs) + 1
         decoded = Tuple(from_unit(d, u) for (d, u) in zip(ho.candidates, unit_params))
-        params = NamedTuple{Tuple(ho.params)}(decoded) # e.g. (a = 1.5, b = true) -- labeled everywhere, not just in warnings
+        params = NamedTuple{Tuple(ho.params)}(decoded)
         entry = create_run_entry(ho.sampler, ho, id, params, unit_params)
         push!(ho.runs, entry)
         ho.n_pending += 1
@@ -88,7 +86,6 @@ function ask!(ho::Hyperoptimizer)
     end
 end
 
-# finalize_entry already excludes NaN outcomes as Failed, so a Completed value is never NaN here.
 function update_best!(ho::Hyperoptimizer, entry::RunEntry)
     if ho.best_min_id === nothing || entry.value < ho.runs[ho.best_min_id].value
         ho.best_min_id = entry.id
@@ -149,8 +146,6 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
     progress = nothing
     if show_progress
         progress = ProgressMeter.Progress(ho.n)
-        # force=true syncs the bar to a resumed run's real starting position (Progress's `start` kwarg doesn't actually seed it)...
-        # ...and ensures finish! below actually prints, which ProgressMeter otherwise skips if nothing was ever printed.
         ProgressMeter.update!(progress, n_told(ho); force=true)
     end
     try
@@ -180,7 +175,6 @@ function run!(ho::Hyperoptimizer; executor::AbstractExecutor=Serial(),
     return ho
 end
 
-# Any exception is treated identically: Errored, in-flight trials abandoned, rethrown unchanged.
 function _handle_run_error(e, ho::Hyperoptimizer)
     ho.status = Errored
     lock(ho.lock) do
