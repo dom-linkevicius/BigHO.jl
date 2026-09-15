@@ -158,7 +158,7 @@ end
 
         # Every iteration runs, and each replays the identical (bracket, rung) dispatch pattern --
         # an iteration is the same schedule over again, not a continuation of the previous one.
-        shapes = [sort([(e.metadata[:bracket].index, e.metadata[:rung])
+        shapes = [sort([(e.metadata[:bracket].bracket, e.metadata[:rung])
                         for e in ho.runs if e.metadata[:bracket].iteration == t]) for t in 1:3]
         @test all(!isempty, shapes)
         @test shapes[2] == shapes[1]

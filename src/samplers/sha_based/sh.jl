@@ -41,9 +41,9 @@ _resource(::Int, r_min::Int, η::Int, k::Int, i::Int) = r_min * η^(k + i - 2)
 # bracket schedule, so `index` alone is ambiguous once `iterations > 1`.
 struct BracketId
     iteration::Int
-    index::Int
+    bracket::Int
 end
-_label(k::BracketId) = "bracket $(k.index) of iteration $(k.iteration)"
+_label(k::BracketId) = "bracket $(k.bracket) of iteration $(k.iteration)"
 
 _at_rung(e, k::BracketId, i::Int) = e.metadata[:bracket] == k && e.metadata[:rung] == i
 _dispatched_count(runs, k::BracketId, i::Int) = count(e -> _at_rung(e, k, i), runs)
@@ -67,19 +67,19 @@ _total_draws(s::SuccessiveHalving) = s.iterations * _total_draws(s.R, s.r_min, s
 # What _bracket_decision decided. The kind is a type parameter so the consumers dispatch on it;
 # :promote is the widest case, so every kind carries its fields and the unused ones are `missing`.
 struct SHDecision{K}
-    bracket::Union{BracketId,Missing}
+    bracket_id::Union{BracketId,Missing}
     rung::Union{Int,Missing}
     promoted_from::Union{Int,Missing}
 end
 
-_draw(bracket::BracketId, rung::Int) = SHDecision{:draw}(bracket, rung, missing)
-_promote(bracket::BracketId, rung::Int, promoted_from::Int) = SHDecision{:promote}(bracket, rung, promoted_from)
+_draw(bracket_id::BracketId, rung::Int) = SHDecision{:draw}(bracket_id, rung, missing)
+_promote(bracket_id::BracketId, rung::Int, promoted_from::Int) = SHDecision{:promote}(bracket_id, rung, promoted_from)
 _wait() = SHDecision{:wait}(missing, missing, missing)
 _exhausted() = SHDecision{:exhausted}(missing, missing, missing)
 
 # Falls through to the next bracket, then to the next iteration's first bracket, then gives up.
 function _fallback_bracket(s::SuccessiveHalving, k::BracketId, runs)
-    k.index < _smax(s.R, s.r_min, s.η) + 1 && return _bracket_decision(s, BracketId(k.iteration, k.index + 1), runs)
+    k.bracket < _smax(s.R, s.r_min, s.η) + 1 && return _bracket_decision(s, BracketId(k.iteration, k.bracket + 1), runs)
     k.iteration < s.iterations && return _bracket_decision(s, BracketId(k.iteration + 1, 1), runs)
     return _exhausted()
 end
@@ -92,13 +92,13 @@ _propose(::SHDecision{:exhausted}, s::SuccessiveHalving, candidates, runs) =
     throw(ArgumentError("$(typeof(s)) has finished all $(s.iterations) iterations of its schedule and can propose nothing further; `exhausted` reports this"))
 
 function _entry_for(d::SHDecision{:draw}, s::SuccessiveHalving, ho, id, params, unit_params)
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung))
-    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung, :bracket => d.bracket))
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket_id.bracket, d.rung))
+    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung, :bracket => d.bracket_id))
 end
 
 function _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung + 1))
-    metadata = Dict{Symbol,Any}(:rung => d.rung + 1, :bracket => d.bracket, :promoted_from => d.promoted_from)
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket_id.bracket, d.rung + 1))
+    metadata = Dict{Symbol,Any}(:rung => d.rung + 1, :bracket => d.bracket_id, :promoted_from => d.promoted_from)
     return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[d.promoted_from].post_artefact)
 end
 
