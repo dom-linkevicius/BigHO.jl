@@ -140,6 +140,39 @@ end
     end
 end
 
+@testset "Hyperband/ASHA multi-iteration schedules" begin
+    @info "Testing Hyperband/ASHA replaying the whole bracket schedule for iterations > 1"
+
+    @test_throws ArgumentError Hyperband(R=9, η=3, r_min=1, iterations=0)
+    @test_throws ArgumentError ASHA(R=9, η=3, r_min=1, iterations=-1)
+
+    toy(p; pre_artefact=nothing) = ((p.a - 3.0)^2 + 1.0 / p.r, nothing)
+    one_pass = BigHO._total_trials(9, 1, 3)
+
+    for sampler in (Hyperband(R=9, η=3, r_min=1, iterations=3), ASHA(R=9, η=3, r_min=1, iterations=3))
+        ho = Hyperoptimizer(Stateful(toy), (a=Continuous(0, 10),), sampler)
+        run!(ho; show_progress=false)
+        @test ho.n == 3 * one_pass
+        @test length(ho.runs) == ho.n
+        @test ho.status == BigHO.Finished
+
+        # Every iteration runs, and each replays the identical (bracket, rung) dispatch pattern --
+        # an iteration is the same schedule over again, not a continuation of the previous one.
+        shapes = [sort([(e.metadata[:bracket].index, e.metadata[:rung])
+                        for e in ho.runs if e.metadata[:bracket].iteration == t]) for t in 1:3]
+        @test all(!isempty, shapes)
+        @test shapes[2] == shapes[1]
+        @test shapes[3] == shapes[1]
+
+        # A promotion must come from its own iteration: without the iteration in BracketId, a later
+        # iteration's rung 1 would see the earlier one's trials and promote across the boundary.
+        for e in ho.runs
+            haskey(e.metadata, :promoted_from) || continue
+            @test ho.runs[e.metadata[:promoted_from]].metadata[:bracket].iteration == e.metadata[:bracket].iteration
+        end
+    end
+end
+
 @testset "Hyperband/ASHA under Threaded executor" begin
     @info "Testing Hyperband/ASHA under the Threaded executor (cross-bracket promotion correctness under real concurrency)"
 
