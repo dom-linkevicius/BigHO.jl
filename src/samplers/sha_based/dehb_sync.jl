@@ -24,15 +24,16 @@ create_run_entry(::DEHBSampler, ho, id, params, unit_params) = _dehb_standalone(
 (::DEHBSampler)(candidates, runs) = _dehb_standalone()
 
 """
-    DEHB(; R, η=3, r_min=1, F=0.5, crossover=0.5, rng=StableRNG(1))
+    DEHB(; R, η=3, r_min=1, iterations=1, F=0.5, crossover=0.5, rng=StableRNG(1))
 """
 const DEHB = SuccessiveHalving{true,<:DEHBSampler}
 
 # `DEHB` is a concrete-inner parametrisation, so it doesn't pick up SuccessiveHalving{Sync}'s
 # keyword constructor -- give it one that builds the inner sampler from DE's own keywords.
-SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, F::Real=0.5, crossover::Real=0.5,
-                                       rng::Random.AbstractRNG=StableRNG(1)) =
-    SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
+SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, iterations::Int=1, F::Real=0.5,
+                                       crossover::Real=0.5, rng::Random.AbstractRNG=StableRNG(1)) =
+    SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, iterations=iterations,
+                            inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
 
 # §4.1: a budget's subpopulation is the most trials HB ever allocates to it -- that is the first
 # rung of the bracket starting there, since every later bracket reaches it only after halvings.
@@ -85,8 +86,8 @@ end
 # On the outer sampler: only the schedule knows which budget a fresh draw belongs to.
 function _sample_sh_inner(s::DEHB, candidates, runs)
     de = s.inner
-    k = _bracket_decision(s, 1, runs).bracket
-    budget = _resource(s.R, s.r_min, s.η, k, 1)
+    k = _bracket_decision(s, BracketId(1, 1), runs).bracket
+    budget = _resource(s.R, s.r_min, s.η, k.index, 1)
     budget == s.r_min && return rand(de.rng, length(candidates))
 
     slots = _subpopulation(s, runs, budget)
