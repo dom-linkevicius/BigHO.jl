@@ -35,6 +35,12 @@ SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, iterati
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, iterations=iterations,
                             inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
 
+# Unlike Hyperband/ASHA, DEHB trains every configuration from scratch at its resource level, so a
+# Stateful objective would resume weights belonging to a different configuration.
+_check_objective(::DEHB, objective) =
+    objective isa Stateful &&
+        throw(ArgumentError("Hyperoptimizer: DEHB trains every configuration from scratch at its resource level, so there is no state to resume -- pass the objective unwrapped rather than wrapped in `Stateful`"))
+
 # §4.1: a budget's subpopulation is the most trials HB ever allocates to it -- that is the first
 # rung of the bracket starting there, since every later bracket reaches it only after halvings.
 _subpop_size(s::DEHB, budget::Int) = _capacity(s.R, s.r_min, s.η, _smax(budget, s.r_min, s.η) + 1, 1)
@@ -88,7 +94,7 @@ function _sample_sh_inner(s::DEHB, candidates, runs)
     de = s.inner
     k = _bracket_decision(s, BracketId(1, 1), runs).bracket
     budget = _resource(s.R, s.r_min, s.η, k.index, 1)
-    budget == s.r_min && return rand(de.rng, length(candidates))
+    k.iteration == 1 && budget == s.r_min && return rand(de.rng, length(candidates))
 
     slots = _subpopulation(s, runs, budget)
     occupant = slots[_next_slot(s, runs, budget)]

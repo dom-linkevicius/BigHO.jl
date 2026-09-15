@@ -164,6 +164,11 @@ end
 _record!(d::SHDecision{:draw}, id::Int) = _record!(d.bracket, d.rung, id)
 _record!(d::SHDecision{:promote}, id::Int) = _record!(d.bracket, d.bracket.rungs[d.rung.rung+1], id)
 
+_check_objective(s::SuccessiveHalving, objective) =
+    objective isa Stateful || objective === nothing || @warn "$(typeof(s)) with a non-Stateful objective: promoted trials can't " *
+                                                             "resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- " *
+                                                             "wrap the objective in `Stateful` to make promotions continue instead of restart"
+
 function create_run_entry(s::SuccessiveHalving, ho, id, params, unit_params)
     decision = _manage_decide!(s, ho.runs)
     entry = _entry_for(decision, s, ho, id, params, unit_params)
