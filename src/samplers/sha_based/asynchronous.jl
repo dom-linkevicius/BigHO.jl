@@ -1,23 +1,24 @@
 const SHAsync = SuccessiveHalving{false}
 
 """
-    ASHA(; R, η=3, r_min=1, inner=RandomSampler())
+    ASHA(; R, η=3, r_min=1, iterations=1, inner=RandomSampler())
 """
 const ASHA = SuccessiveHalving{false,<:BasicSamplers}
 
-SuccessiveHalving{false,<:BasicSamplers}(; R::Int, η::Int=3, r_min::Int=1, inner::BasicSamplers=RandomSampler()) =
-    SuccessiveHalving{false}(; R=R, η=η, r_min=r_min, inner=inner)
+SuccessiveHalving{false,<:BasicSamplers}(; R::Int, η::Int=3, r_min::Int=1, iterations::Int=1,
+                                         inner::BasicSamplers=RandomSampler()) =
+    SuccessiveHalving{false}(; R=R, η=η, r_min=r_min, iterations=iterations, inner=inner)
 
 # How many rung-i trials are eligible for promotion into rung i+1 -- top ⌊told/η⌋, capped by
 # rung i+1's own static capacity.
-_n_promotable(s::SHAsync, runs, k::Int, i::Int) =
-    min(floor(Int, length(_told_sorted(runs, k, i)) / s.η), _capacity(s.R, s.r_min, s.η, k, i + 1))
+_n_promotable(s::SHAsync, runs, k::BracketId, i::Int) =
+    min(floor(Int, length(_told_sorted(runs, k, i)) / s.η), _capacity(s.R, s.r_min, s.η, k.index, i + 1))
 
 # Per Li et al. 2020's get_job(): scan rungs top-down for a trial in the top 1/η told so far, not
 # yet promoted, capped by Hyperband's static capacity. Rungs are independent -- no abandonment needed.
-function _bracket_decision(s::SHAsync, k::Int, runs)
+function _bracket_decision(s::SHAsync, k::BracketId, runs)
     R, r_min, η = s.R, s.r_min, s.η
-    n_rungs = _n_rungs(R, r_min, η, k)
+    n_rungs = _n_rungs(R, r_min, η, k.index)
     for i in (n_rungs-1):-1:1
         promoted = _promoted_ids(runs, k, i)
         if length(promoted) < _n_promotable(s, runs, k, i)
@@ -26,7 +27,7 @@ function _bracket_decision(s::SHAsync, k::Int, runs)
             return _promote(k, i, id)
         end
     end
-    _dispatched_count(runs, k, 1) < _capacity(R, r_min, η, k, 1) && return _draw(k, 1)
+    _dispatched_count(runs, k, 1) < _capacity(R, r_min, η, k.index, 1) && return _draw(k, 1)
     # Bottom rung full and nothing promotable: only conclusive once nothing's still in flight
     # anywhere in the bracket -- otherwise a pending trial could still make something promotable.
     any(i -> _pending_count(runs, k, i) > 0, 1:n_rungs) && return _wait()
@@ -35,15 +36,15 @@ end
 
 # Whether bracket k can still draw or promote right now -- _bracket_decision's own local
 # conditions, without its recursive fall-through to bracket k+1 (a different bracket entirely).
-function _bracket_has_room(s::SHAsync, k::Int, runs)
-    _dispatched_count(runs, k, 1) < _capacity(s.R, s.r_min, s.η, k, 1) && return true
-    return any(i -> length(_promoted_ids(runs, k, i)) < _n_promotable(s, runs, k, i), 1:(_n_rungs(s.R, s.r_min, s.η, k)-1))
+function _bracket_has_room(s::SHAsync, k::BracketId, runs)
+    _dispatched_count(runs, k, 1) < _capacity(s.R, s.r_min, s.η, k.index, 1) && return true
+    return any(i -> length(_promoted_ids(runs, k, i)) < _n_promotable(s, runs, k, i), 1:(_n_rungs(s.R, s.r_min, s.η, k.index)-1))
 end
 
 # Whether rung i is resolved: dispatch finalized (own hard capacity reached, or rung below is
 # resolved) and nothing still Pending.
-function _rung_resolved(s::SHAsync, runs, k::Int, i::Int)
-    dispatch_final = if _dispatched_count(runs, k, i) >= _capacity(s.R, s.r_min, s.η, k, i)
+function _rung_resolved(s::SHAsync, runs, k::BracketId, i::Int)
+    dispatch_final = if _dispatched_count(runs, k, i) >= _capacity(s.R, s.r_min, s.η, k.index, i)
         true
     elseif i == 1
         false
@@ -56,14 +57,14 @@ end
 # Warn once when a bracket stalls short of plan -- nothing pending, no rung can accept more.
 # One-time transition (pending only decreases), so this fires exactly once.
 function on_tell!(s::SHAsync, runs, entry)
-    k = entry.metadata[:bracket_k]
+    k = entry.metadata[:bracket]
     R, r_min, η = s.R, s.r_min, s.η
-    n_rungs = _n_rungs(R, r_min, η, k)
+    n_rungs = _n_rungs(R, r_min, η, k.index)
 
     if all(i -> _pending_count(runs, k, i) == 0, 1:n_rungs) && !_bracket_has_room(s, k, runs)
-        total_capacity = sum(_capacity(R, r_min, η, k, i) for i in 1:n_rungs)
+        total_capacity = sum(_capacity(R, r_min, η, k.index, i) for i in 1:n_rungs)
         total_dispatched = sum(_dispatched_count(runs, k, i) for i in 1:n_rungs)
-        total_dispatched < total_capacity && @warn "$(typeof(s)): bracket $k stalled at $total_dispatched/$total_capacity trials dispatched -- no rung can accept more"
+        total_dispatched < total_capacity && @warn "$(typeof(s)): $(_label(k)) stalled at $total_dispatched/$total_capacity trials dispatched -- no rung can accept more"
     end
 
     # Warn once per rung that completes with a failure. `resolved_before` mirrors _rung_resolved's
@@ -71,10 +72,10 @@ function on_tell!(s::SHAsync, runs, entry)
     resolved_before = false
     for i in entry.metadata[:rung]:n_rungs
         if _rung_resolved(s, runs, k, i)
-            resolved_before || _rung_has_failure(runs, k, i) && @warn "$(typeof(s)): rung $i of bracket $k completed with at least one failed trial"
+            resolved_before || _rung_has_failure(runs, k, i) && @warn "$(typeof(s)): rung $i of $(_label(k)) completed with at least one failed trial"
         end
         i == n_rungs && break
-        resolved_before = _dispatched_count(runs, k, i + 1) >= _capacity(R, r_min, η, k, i + 1) ||
+        resolved_before = _dispatched_count(runs, k, i + 1) >= _capacity(R, r_min, η, k.index, i + 1) ||
                           (resolved_before && _dispatched_count(runs, k, i + 1) >= _n_promotable(s, runs, k, i))
     end
     return nothing

@@ -42,7 +42,7 @@ function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHa
     objective isa Stateful || objective === nothing || @warn "$(typeof(sampler)) with a non-Stateful objective: promoted trials can't " *
                                                              "resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- " *
                                                              "wrap the objective in `Stateful` to make promotions continue instead of restart"
-    n = _total_trials(sampler.R, sampler.r_min, sampler.η)
+    n = _total_trials(sampler)
     return Hyperoptimizer(objective, candidates; sampler=sampler, n=n)
 end
 

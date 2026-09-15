@@ -196,7 +196,7 @@ end
     function rung1_entries(k, n_total, n_failed)
         runs = BigHO.RunEntry[]
         for idx in 1:n_total
-            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total], Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
+            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total], Dict{Symbol,Any}(:rung => 1, :bracket => BigHO.BracketId(1, k)))
             e = idx <= n_failed ? BigHO._with_result(e, BigHO.Failed, missing, nothing; error=NaN) :
                                    BigHO._with_result(e, BigHO.Completed, Float64(idx), nothing)
             push!(runs, e)
@@ -211,14 +211,14 @@ end
         BigHO.on_tell!(s, runs, runs[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("promoting fewer than planned", l.message), logs) == 1
-    @test BigHO._bracket_decision(s, 1, runs) == BigHO._promote(1, 1, 8) # best of the 2 completed (id=8, value 8.0 < id=9's 9.0)
+    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), runs) == BigHO._promote(BigHO.BracketId(1, 1), 1, 8) # best of the 2 completed (id=8, value 8.0 < id=9's 9.0)
 
     # Promote both survivors -- once the shrunk target (2, not 3) is reached, the bracket must
     # move on to rung 2's own state, not keep waiting for a 3rd promotion that will never come.
-    push!(runs, BigHO.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket_k => 1)))
-    @test BigHO._bracket_decision(s, 1, runs) == BigHO._promote(1, 1, 9)
-    push!(runs, BigHO.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket_k => 1)))
-    @test BigHO._bracket_decision(s, 1, runs) == BigHO._wait() # both Pending now, not stuck asking for a nonexistent 3rd
+    push!(runs, BigHO.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket => BigHO.BracketId(1, 1))))
+    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), runs) == BigHO._promote(BigHO.BracketId(1, 1), 1, 9)
+    push!(runs, BigHO.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket => BigHO.BracketId(1, 1))))
+    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), runs) == BigHO._wait() # both Pending now, not stuck asking for a nonexistent 3rd
 
     # Total wipeout: every rung-1 trial fails -- the bracket is abandoned (warned once) and
     # control moves to bracket 2's own fresh draw, instead of blocking forever.
@@ -226,8 +226,8 @@ end
     logs2, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, wiped, wiped[end])
     end
-    @test count(l -> l.level == Logging.Warn && occursin("abandoning bracket", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s, 1, wiped) == BigHO._draw(2, 1)
+    @test count(l -> l.level == Logging.Warn && occursin("abandoning it", l.message), logs2) == 1
+    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), wiped) == BigHO._draw(BigHO.BracketId(1, 2), 1)
 
     # End-to-end through run!, under both Serial and Threaded: failures depend only on the candidate
     # value (never on dispatch order or timing) and ask! is serialized, so both executors see the
@@ -275,7 +275,7 @@ end
     function rung1_entries(k, n_total, n_failed)
         runs = BigHO.RunEntry[]
         for idx in 1:n_total
-            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total], Dict{Symbol,Any}(:rung => 1, :bracket_k => k))
+            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total], Dict{Symbol,Any}(:rung => 1, :bracket => BigHO.BracketId(1, k)))
             e = idx <= n_failed ? BigHO._with_result(e, BigHO.Failed, missing, nothing; error=NaN) :
                                    BigHO._with_result(e, BigHO.Completed, Float64(idx), nothing)
             push!(runs, e)
@@ -298,9 +298,9 @@ end
     logs2, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, wiped, wiped[end])
     end
-    @test count(l -> l.level == Logging.Warn && occursin("bracket 1 stalled at 9/13", l.message), logs2) == 1
-    @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 1 completed with at least one failed trial", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s, 1, wiped) == BigHO._draw(2, 1) # moves on to bracket 2, doesn't block forever
+    @test count(l -> l.level == Logging.Warn && occursin("bracket 1 of iteration 1 stalled at 9/13", l.message), logs2) == 1
+    @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 1 of iteration 1 completed with at least one failed trial", l.message), logs2) == 1
+    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), wiped) == BigHO._draw(BigHO.BracketId(1, 2), 1) # moves on to bracket 2, doesn't block forever
 
     # End-to-end through run!, under both Serial and Threaded: same value-keyed failure rule as
     # Hyperband's own failure test. Unlike Hyperband, ASHA promotes off whatever is told SO FAR, so
