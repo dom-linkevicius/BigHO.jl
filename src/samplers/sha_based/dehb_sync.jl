@@ -81,26 +81,26 @@ function _de_trial(s::DEHBSampler, target::Vector{Float64}, parents::Vector{Vect
 end
 
 _propose(d::SHDecision{:promote}, s::DEHB, candidates, runs) =
-    d.bracket.iteration == 1 && d.bracket.index > 1 ? copy(runs[d.promoted_from].unit_params) :
+    d.bracket_id.iteration == 1 && d.bracket_id.bracket > 1 ? copy(runs[d.promoted_from].unit_params) :
     _sample_sh_inner(s, candidates, runs, d)
 
 function _entry_for(d::SHDecision{:promote}, s::DEHB, ho, id, params, unit_params)
-    d.bracket.iteration == 1 && d.bracket.index > 1 &&
+    d.bracket_id.iteration == 1 && d.bracket_id.bracket > 1 &&
         return @invoke _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung + 1))
-    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung + 1, :bracket => d.bracket))
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket_id.bracket, d.rung + 1))
+    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung + 1, :bracket => d.bracket_id))
 end
 
 function _sample_sh_inner(s::DEHB, candidates, runs, d::SHDecision{:draw})
-    budget = _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung)
+    budget = _resource(s.R, s.r_min, s.η, d.bracket_id.bracket, d.rung)
     slots = _subpopulation(s, runs, budget)
-    return _sample_sh_inner(s, candidates, runs, d.bracket, budget, slots, _occupants(slots))
+    return _sample_sh_inner(s, candidates, runs, d.bracket_id, budget, slots, _occupants(slots))
 end
 
 function _sample_sh_inner(s::DEHB, candidates, runs, d::SHDecision{:promote})
-    budget = _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung + 1)
+    budget = _resource(s.R, s.r_min, s.η, d.bracket_id.bracket, d.rung + 1)
     slots = _subpopulation(s, runs, budget)
-    return _sample_sh_inner(s, candidates, runs, d.bracket, budget, slots, _parent_pool(s, runs, budget))
+    return _sample_sh_inner(s, candidates, runs, d.bracket_id, budget, slots, _parent_pool(s, runs, budget))
 end
 
 function _sample_sh_inner(s::DEHB, candidates, runs, k::BracketId, budget::Int, slots, parents)
