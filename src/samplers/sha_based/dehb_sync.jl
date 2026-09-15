@@ -12,8 +12,6 @@ function DEHBSampler(; F::Real=0.5, crossover::Real=0.5, rng::Random.AbstractRNG
     return DEHBSampler(Float64(F), Float64(crossover), rng)
 end
 
-# init is the only hook SuccessiveHalving calls on its inner sampler; everything else is reached
-# only by driving a DEHBSampler as a sampler in its own right, which it can't be.
 init(s::DEHBSampler, candidates, n) = s
 
 _dehb_standalone() = throw(ArgumentError("DEHBSampler can't be used on its own; construct DEHB(; R, ...) instead"))
@@ -28,21 +26,15 @@ create_run_entry(::DEHBSampler, ho, id, params, unit_params) = _dehb_standalone(
 """
 const DEHB = SuccessiveHalving{true,<:DEHBSampler}
 
-# `DEHB` is a concrete-inner parametrisation, so it doesn't pick up SuccessiveHalving{Sync}'s
-# keyword constructor -- give it one that builds the inner sampler from DE's own keywords.
 SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, iterations::Int=1, F::Real=0.5,
                                        crossover::Real=0.5, rng::Random.AbstractRNG=StableRNG(1)) =
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, iterations=iterations,
                             inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
 
-# Unlike Hyperband/ASHA, DEHB trains every configuration from scratch at its resource level, so a
-# Stateful objective would resume weights belonging to a different configuration.
 _check_objective(::DEHB, objective) =
     objective isa Stateful &&
         throw(ArgumentError("Hyperoptimizer: DEHB trains every configuration from scratch at its resource level, so there is no state to resume -- pass the objective unwrapped rather than wrapped in `Stateful`"))
 
-# §4.1: a budget's subpopulation is the most trials HB ever allocates to it -- that is the first
-# rung of the bracket starting there, since every later bracket reaches it only after halvings.
 _subpop_size(s::DEHB, budget::Int) = _capacity(s.R, s.r_min, s.η, _smax(budget, s.r_min, s.η) + 1, 1)
 
 function _next_slot(s::DEHB, runs, budget::Int)
@@ -50,7 +42,6 @@ function _next_slot(s::DEHB, runs, budget::Int)
     return mod(dispatched, _subpop_size(s, budget)) + 1
 end
 
-# Selection only ever replaces a slot with something better, so its survivor is that slot's argmin.
 function _subpopulation(s::DEHB, runs, budget::Int)
     slots = Union{Nothing,Vector{Float64}}[nothing for _ in 1:_subpop_size(s, budget)]
     best = fill(Inf, length(slots))
@@ -76,7 +67,6 @@ function _global_pool(s::DEHB, runs)
     return pool
 end
 
-# DE/rand/1/bin, with `forced` guaranteeing the trial differs from its target somewhere.
 function _de_trial(s::DEHBSampler, target::Vector{Float64}, parents::Vector{Vector{Float64}})
     r1, r2, r3 = parents[randperm(s.rng, length(parents))[1:3]]
     mutant = r1 .+ s.F .* (r2 .- r3)
@@ -89,11 +79,10 @@ function _de_trial(s::DEHBSampler, target::Vector{Float64}, parents::Vector{Vect
     return ifelse.(cross, mutant, target)
 end
 
-# On the outer sampler: only the schedule knows which budget a fresh draw belongs to.
-function _sample_sh_inner(s::DEHB, candidates, runs)
+function _sample_sh_inner(s::DEHB, candidates, runs, d::SHDecision{:draw})
     de = s.inner
-    k = _bracket_decision(s, BracketId(1, 1), runs).bracket
-    budget = _resource(s.R, s.r_min, s.η, k.index, 1)
+    k = d.bracket
+    budget = _resource(s.R, s.r_min, s.η, k.index, d.rung)
     k.iteration == 1 && budget == s.r_min && return rand(de.rng, length(candidates))
 
     slots = _subpopulation(s, runs, budget)
