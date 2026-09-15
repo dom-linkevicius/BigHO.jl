@@ -58,6 +58,8 @@ end
 
 _occupants(slots) = Vector{Float64}[v for v in slots if v !== nothing]
 
+_parent_pool(s::DEHB, runs, budget::Int) = _occupants(_subpopulation(s, runs, budget ÷ s.η))
+
 function _global_pool(s::DEHB, runs)
     pool = Vector{Vector{Float64}}()
     for i in 0:_smax(s.R, s.r_min, s.η)
@@ -79,20 +81,39 @@ function _de_trial(s::DEHBSampler, target::Vector{Float64}, parents::Vector{Vect
     return ifelse.(cross, mutant, target)
 end
 
+_propose(d::SHDecision{:promote}, s::DEHB, candidates, runs) =
+    d.bracket.iteration == 1 && d.bracket.index == 1 ? copy(runs[d.promoted_from].unit_params) :
+    _sample_sh_inner(s, candidates, runs, d)
+
+function _entry_for(d::SHDecision{:promote}, s::DEHB, ho, id, params, unit_params)
+    d.bracket.iteration == 1 && d.bracket.index == 1 &&
+        return @invoke _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
+    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung + 1))
+    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung + 1, :bracket => d.bracket))
+end
+
 function _sample_sh_inner(s::DEHB, candidates, runs, d::SHDecision{:draw})
+    budget = _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung)
+    slots = _subpopulation(s, runs, budget)
+    return _sample_sh_inner(s, candidates, runs, d.bracket, budget, slots, _occupants(slots))
+end
+
+function _sample_sh_inner(s::DEHB, candidates, runs, d::SHDecision{:promote})
+    budget = _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung + 1)
+    slots = _subpopulation(s, runs, budget)
+    return _sample_sh_inner(s, candidates, runs, d.bracket, budget, slots, _parent_pool(s, runs, budget))
+end
+
+function _sample_sh_inner(s::DEHB, candidates, runs, k::BracketId, budget::Int, slots, parents)
     de = s.inner
-    k = d.bracket
-    budget = _resource(s.R, s.r_min, s.η, k.index, d.rung)
     k.iteration == 1 && budget == s.r_min && return rand(de.rng, length(candidates))
 
-    slots = _subpopulation(s, runs, budget)
     occupant = slots[_next_slot(s, runs, budget)]
     pool = _global_pool(s, runs)
 
     ### the paper does not seem to mention what happens in the case where there aren't enough targets
     ### whether to take from the same subpopulation, but not replace them or from global population
-    target = occupant === nothing ? rand(de.rng, pool) : occupant 
-    parents = _occupants(slots)
+    target = occupant === nothing ? rand(de.rng, pool) : occupant
     append!(parents, rand(de.rng, pool, max(0, 3 - length(parents))))
     return _de_trial(de, target, parents)
 end
