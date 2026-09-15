@@ -71,7 +71,7 @@ function _fallback_bracket(s::SuccessiveHalving, k::BracketId, runs)
     return _exhausted()
 end
 
-_propose(::SHDecision{:draw}, s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s, candidates, runs)
+_propose(d::SHDecision{:draw}, s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s, candidates, runs, d)
 _propose(d::SHDecision{:promote}, ::SuccessiveHalving, candidates, runs) = copy(runs[d.promoted_from].unit_params)
 _propose(::SHDecision{:wait}, s::SuccessiveHalving, candidates, runs) =
     throw(ArgumentError("$(typeof(s)) has nothing to propose right now -- every bracket is waiting on trials that were asked but not yet told; `blocked` reports this"))
@@ -90,10 +90,11 @@ function _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, param
 end
 
 function (s::SuccessiveHalving)(candidates, runs)
-    return _propose(_bracket_decision(s, BracketId(1, 1), runs), s, candidates, runs)
+    dec = _bracket_decision(s, BracketId(1, 1), runs)
+    return _propose(dec, s, candidates, runs)
 end
 
-_sample_sh_inner(s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s.inner, candidates, runs)
+_sample_sh_inner(s::SuccessiveHalving, candidates, runs, ::SHDecision{:draw}) = _sample_sh_inner(s.inner, candidates, runs)
 _sample_sh_inner(inner::Sampler, candidates, runs) = inner(candidates, runs)
 _sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(e -> e.metadata[:rung] == 1, runs))
 
