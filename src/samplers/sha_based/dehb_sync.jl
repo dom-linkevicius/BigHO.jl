@@ -31,9 +31,8 @@ SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, iterati
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, iterations=iterations,
                             inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
 
-_check_objective(::DEHB, objective) =
-    objective isa Stateful &&
-        throw(ArgumentError("Hyperoptimizer: DEHB trains every configuration from scratch at its resource level, so there is no state to resume -- pass the objective unwrapped rather than wrapped in `Stateful`"))
+_check_objective(s::DEHB, objective) =
+    objective isa Stateful && @warn "$(typeof(s)) with a Stateful objective: pre_artefact is only set on promotions in brackets above bracket 1 of iteration 1; every other trial trains from scratch. post_artefact is recorded either way"
 
 _subpop_size(s::DEHB, budget::Int) = _capacity(s.R, s.r_min, s.η, _smax(budget, s.r_min, s.η) + 1, 1)
 
@@ -82,11 +81,11 @@ function _de_trial(s::DEHBSampler, target::Vector{Float64}, parents::Vector{Vect
 end
 
 _propose(d::SHDecision{:promote}, s::DEHB, candidates, runs) =
-    d.bracket.iteration == 1 && d.bracket.index == 1 ? copy(runs[d.promoted_from].unit_params) :
+    d.bracket.iteration == 1 && d.bracket.index > 1 ? copy(runs[d.promoted_from].unit_params) :
     _sample_sh_inner(s, candidates, runs, d)
 
 function _entry_for(d::SHDecision{:promote}, s::DEHB, ho, id, params, unit_params)
-    d.bracket.iteration == 1 && d.bracket.index == 1 &&
+    d.bracket.iteration == 1 && d.bracket.index > 1 &&
         return @invoke _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
     with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket.index, d.rung + 1))
     return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung + 1, :bracket => d.bracket))
