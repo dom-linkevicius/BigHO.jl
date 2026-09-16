@@ -1,5 +1,3 @@
-# Proposes the stratum centre of level n_calls, so it produces candidates 1, 2, 3, ... in order and
-# a specific trial can be rigged by VALUE rather than by timing.
 mutable struct SequentialSampler <: BigHO.Sampler
     n_calls::Int
 end
@@ -20,16 +18,13 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
     @test_throws ArgumentError DistributedQueue(0; spawn_worker=() -> error("should not be called"))
     @test_throws ArgumentError DistributedQueue(-1; spawn_worker=() -> error("should not be called"))
 
-    # teardown_timeout=0 means "fire-and-forget, no bound" to rmprocs, not "don't wait" -- rejected along with negative/NaN.
     @test_throws ArgumentError DistributedQueue(1; spawn_worker=() -> error("should not be called"), teardown_timeout=0)
     @test_throws ArgumentError DistributedQueue(1; spawn_worker=() -> error("should not be called"), teardown_timeout=-1)
     @test_throws ArgumentError DistributedQueue(1; spawn_worker=() -> error("should not be called"), teardown_timeout=NaN)
 
-    # spawn_worker is required -- no generic implementation works for an arbitrary cluster.
     @test_throws UndefKeywordError DistributedQueue()
     @test_throws UndefKeywordError DistributedQueue(4)
 
-    # spawn_worker just creates the process; setup_worker loads BigHO + this file's test functions onto it.
     test_spawn_worker() = first(addprocs(1))
     function test_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
@@ -45,7 +40,6 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
 
     max_concurrency = 3
     try
-        # capacity bookkeeping: consumed by submit!, restored by poll.
         ex = DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex, nothing)
         @test BigHO.capacity(ex) == max_concurrency
@@ -56,13 +50,12 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         BigHO.submit!(ex, entry2, dq_square)
         @test BigHO.capacity(ex) == max_concurrency - 2
         out = BigHO.poll(ex)
-        append!(out, BigHO.poll(ex)) # a second call is always safe, see the analogous Threaded test
+        append!(out, BigHO.poll(ex))
         @test length(out) == 2
         @test BigHO.capacity(ex) == max_concurrency
         @test Set(e.id for (e, _) in out) == Set([1, 2])
         BigHO.shutdown!(ex)
 
-        # Regression: poll() must not discard earlier good results just because a later item is an interrupt.
         ex_batch = DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex_batch, nothing)
         entryA = BigHO.RunEntry(1, (a=1,), Float64[])
@@ -78,7 +71,6 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         @test_throws InterruptException BigHO.poll(ex_batch)
         BigHO.shutdown!(ex_batch)
 
-        # Regression: shutdown! kills unfinished trials, but an already-completed trial's result must survive.
         shutdown_spawned = Int[]
         function shutdown_spawn_worker()
             pid = first(addprocs(1))
@@ -88,19 +80,18 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         shutdown_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
         ex_shutdown = DistributedQueue(2; spawn_worker=shutdown_spawn_worker, setup_worker=shutdown_setup_worker)
         BigHO.start!(ex_shutdown, nothing)
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,), Float64[]), p -> p.a^2) # fast
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(2, (a=2,), Float64[]), p -> (sleep(30.0); p.a^2)) # slow
-        sleep(5.0) # generous margin for the fast trial's own spawn+compute+report+teardown to genuinely finish
+        BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,), Float64[]), p -> p.a^2)
+        BigHO.submit!(ex_shutdown, BigHO.RunEntry(2, (a=2,), Float64[]), p -> (sleep(30.0); p.a^2))
+        sleep(5.0)
         elapsed = @elapsed BigHO.shutdown!(ex_shutdown)
-        @test elapsed < 10.0 # killed the slow trial rather than waiting out its full 30s sleep
+        @test elapsed < 10.0
         out_shutdown = BigHO.poll(ex_shutdown)
         out_shutdown_by_id = Dict(e.id => outcome for (e, outcome) in out_shutdown)
-        @test out_shutdown_by_id[1].value == 1 # the fast trial's real result, preserved
-        @test out_shutdown_by_id[2] isa Exception # the slow trial, killed by shutdown!, reported failed not silently lost
+        @test out_shutdown_by_id[1].value == 1
+        @test out_shutdown_by_id[2] isa Exception
         @test length(shutdown_spawned) == 2
-        @test isempty(intersect(shutdown_spawned, workers())) # both torn down -- none leaked
+        @test isempty(intersect(shutdown_spawned, workers()))
 
-        # shutdown! doesn't swallow a failed task's exception -- wait() raises it, same as any other error.
         ex_task_failure = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex_task_failure, nothing)
         failed_task = @async throw(InterruptException())
@@ -109,12 +100,9 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         catch
         end
         @test istaskfailed(failed_task)
-        # Placeholder pid -- never used, since this task is already done.
         push!(ex_task_failure.tasks, (0, failed_task))
         @test_throws TaskFailedException BigHO.shutdown!(ex_task_failure)
 
-        # Regression: an interrupt in the LOCAL supervisory task (blocked in fetch()) must be forwarded, not lost.
-        # setup_done flags when setup_worker() has returned, so the interrupt reliably lands inside fetch().
         setup_done = Ref(false)
         function interrupt_setup_worker(pid)
             test_setup_worker(pid)
@@ -129,31 +117,27 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
                 waited += 0.1
             end
         end
-        @test setup_done[] # sanity: actually reached fetch(), not still in setup_worker
-        sleep(0.1) # remotecall itself is near-instant once setup_worker() returns
+        @test setup_done[]
+        sleep(0.1)
         schedule(ex_interrupt.tasks[1][2], InterruptException(); error=true)
-        @test isempty(BigHO.poll(ex_interrupt)) # nothing lost, just nothing to report yet
-        @test_throws InterruptException BigHO.poll(ex_interrupt) # deferred throw on the next call
+        @test isempty(BigHO.poll(ex_interrupt))
+        @test_throws InterruptException BigHO.poll(ex_interrupt)
         BigHO.shutdown!(ex_interrupt)
 
-        # An InterruptException from the OBJECTIVE (remote) arrives wrapped in a RemoteException, unlike a local one -- treated as an ordinary Failed trial.
         ex_objective_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
         BigHO.start!(ex_objective_interrupt, nothing)
         BigHO.submit!(ex_objective_interrupt, BigHO.RunEntry(1, (a=1,), Float64[]), p -> throw(InterruptException()))
         out_objective_interrupt = BigHO.poll(ex_objective_interrupt)
         @test length(out_objective_interrupt) == 1
-        @test out_objective_interrupt[1][2] isa Exception # an ordinary Failed outcome, not an abort
+        @test out_objective_interrupt[1][2] isa Exception
         BigHO.shutdown!(ex_objective_interrupt)
 
-        # Correctness: a full run through Hyperoptimizer/run! works, not just the low-level interface above.
         ho = Hyperoptimizer(dq_square, (a=Ordinal(1:5),); n=20)
         run!(ho; executor=DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker))
         @test length(results(ho)) == 20
         @test all(e -> e.status == BigHO.Completed, ho.runs)
         @test minimum(ho) == 1
 
-        # A worker dying mid-trial reports that trial Failed without crashing the run or affecting siblings.
-        # Rigged by VALUE (one param calls exit()), not by timing, which flaked on a loaded CI runner.
         n_death_trials = 4
         dying_id = 2
         death_spawned = Int[]
@@ -169,7 +153,6 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         for i in 1:n_death_trials
             BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,), Float64[]), dq_death_or_square)
         end
-        # Watched with a timeout so a "worker dies -> hang" regression fails loudly instead of hanging the suite.
         collected = Tuple{BigHO.RunEntry,Any}[]
         collect_task = @async begin
             while length(collected) < n_death_trials
@@ -185,17 +168,15 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         @test istaskdone(collect_task)
         @test length(collected) == n_death_trials
         @test length(death_spawned) == n_death_trials
-        @test length(unique(death_spawned)) == n_death_trials # no reuse: one distinct worker per trial
+        @test length(unique(death_spawned)) == n_death_trials
         outcome_by_id = Dict(e.id => outcome for (e, outcome) in collected)
-        @test outcome_by_id[dying_id] isa Exception # the trial whose worker died is reported failed, not lost
+        @test outcome_by_id[dying_id] isa Exception
         for i in 1:n_death_trials
             i == dying_id && continue
-            @test outcome_by_id[i].value == i^2 # siblings unaffected, each with its own correct result
+            @test outcome_by_id[i].value == i^2
         end
         BigHO.shutdown!(ex_death)
 
-        # Regression: an interrupt with MULTIPLE trials in flight must abandon EVERY Pending entry (not just one) and tear down every worker.
-        # SequentialSampler makes tasks[1] deterministically trial 1; waits for all 3 workers to spawn before interrupting.
         interrupt_others_spawned = Int[]
         function interrupt_others_spawn_worker()
             pid = first(addprocs(1))
@@ -203,7 +184,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
             return pid
         end
         interrupt_others_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
-        dq_interrupt_others = p -> (sleep(30.0); p.a^2) # generous margin -- Windows CI's slower process spawn eats into it
+        dq_interrupt_others = p -> (sleep(30.0); p.a^2)
         ex_interrupt_others = DistributedQueue(3; spawn_worker=interrupt_others_spawn_worker, setup_worker=interrupt_others_setup_worker)
         ho_dq_interrupt = Hyperoptimizer(dq_interrupt_others, (a=Nominal([1, 2, 3]),);
                                           sampler=SequentialSampler(), n=3)
@@ -214,7 +195,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
                 waited += 0.1
             end
         end
-        @test length(interrupt_others_spawned) == 3 # sanity: all 3 workers spawned before we interrupt
+        @test length(interrupt_others_spawned) == 3
         schedule(ex_interrupt_others.tasks[1][2], InterruptException(); error=true)
         caught = nothing
         try
@@ -227,11 +208,10 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         @test ho_dq_interrupt.status == BigHO.Errored
         @test ho_dq_interrupt.n_pending == 0
         @test length(ho_dq_interrupt.runs) == 3
-        @test count(e -> e.status == BigHO.Abandoned, ho_dq_interrupt.runs) == 3 # all 3, not just the one that threw
-        @test length(interrupt_others_spawned) == 3 # one dedicated worker per trial, as always
-        @test isempty(intersect(interrupt_others_spawned, workers())) # every one of them was torn down -- none leaked
+        @test count(e -> e.status == BigHO.Abandoned, ho_dq_interrupt.runs) == 3
+        @test length(interrupt_others_spawned) == 3
+        @test isempty(intersect(interrupt_others_spawned, workers()))
 
-        # Regression: setup_worker() throwing after spawn_worker() succeeded is an ordinary Failed trial and doesn't leak the worker.
         spawn_fail_spawned = Int[]
         function spawn_fail_spawn_worker()
             pid = first(addprocs(1))
@@ -244,10 +224,10 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         BigHO.submit!(ex_spawn_fail, BigHO.RunEntry(1, (a=1,), Float64[]), dq_square)
         out_spawn_fail = BigHO.poll(ex_spawn_fail)
         @test length(out_spawn_fail) == 1
-        @test out_spawn_fail[1][2] isa Exception # an ordinary Failed outcome, not a hang or crash
+        @test out_spawn_fail[1][2] isa Exception
         BigHO.shutdown!(ex_spawn_fail)
         @test length(spawn_fail_spawned) == 1
-        @test isempty(intersect(spawn_fail_spawned, workers())) # setup_worker failing doesn't leak it anymore
+        @test isempty(intersect(spawn_fail_spawned, workers()))
     finally
         rmprocs(filter(!=(1), workers()))
     end

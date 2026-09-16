@@ -5,12 +5,6 @@ using DataFrames
 using CairoMakie
 using AlgebraOfGraphics
 
-# Run only the concern(s) named in ARGS -- e.g. `julia test/runtests.jl basic
-# samplers` or `Pkg.test(; test_args=["threaded"])`. With no ARGS at all (e.g.
-# plain `Pkg.test()`/`] test`), run every concern, so the standard invocation
-# still works out of the box; callers that only care about a subset -- like
-# CI, which doesn't need to re-verify non-threading concerns under multiple
-# Julia threads -- can still narrow it down explicitly via test_args.
 const CONCERNS = Dict(
     "basic" => ["basic/domains.jl", "basic/artefacts.jl", "basic/failures.jl", "basic/manual.jl", "basic/persistence.jl", "basic/progress.jl", "basic/dataframe.jl", "basic/plotting.jl"],
     "samplers" => ["samplers/random.jl", "samplers/lhs.jl", "samplers/sh_based.jl"],

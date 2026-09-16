@@ -1,13 +1,10 @@
 @testset "Executor equivalence" begin
     @info "Testing executor equivalence"
 
-    # The SAME setup, run through all three executors, must reach the identical final result.
-    # n is small: DistributedQueue pays a real process-spawn cost per trial.
     @everywhere using BigHO
     @everywhere dq_eq(p) = (p.a - 7)^2 + (p.b - 3)^2
     @everywhere dq_eq_h(p) = p.a == 5 ? error("boom") : p.a
 
-    # spawn_worker just creates the process; setup_worker loads BigHO + this file's test functions onto it.
     test_spawn_worker() = first(addprocs(1))
     function test_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
@@ -22,7 +19,6 @@
         eq_domains = (a=Ordinal(0:10), b=Ordinal(0:10))
         eq_n = 20
 
-        # Threaded(8) only proves equivalence under real concurrency if there's more than one thread.
         @test Threads.nthreads() > 1
 
         ho_s = Hyperoptimizer(dq_eq, eq_domains; n=eq_n)
@@ -37,7 +33,6 @@
         @test minimum(ho_s) == minimum(ho_t) == minimum(ho_d)
         @test minimizer(ho_s) == minimizer(ho_t) == minimizer(ho_d)
 
-        # Same, but with a mix of Completed/Failed outcomes, to catch a race that misattributes a Failed outcome.
         h_domain = (a=Ordinal(1:5),)
         h_n = 20
 
@@ -50,7 +45,7 @@
 
         outcome_by_params(ho) = Dict(e.params => e.status for e in ho.runs)
         @test outcome_by_params(ho_s_mixed) == outcome_by_params(ho_t_mixed) == outcome_by_params(ho_d_mixed)
-        @test BigHO.Failed in values(outcome_by_params(ho_s_mixed)) # sanity: the mix actually includes a failure
+        @test BigHO.Failed in values(outcome_by_params(ho_s_mixed))
     finally
         rmprocs(filter(!=(1), workers()))
     end

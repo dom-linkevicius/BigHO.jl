@@ -3,7 +3,7 @@
 """
 struct LHSampler{T<:Random.AbstractRNG} <: Sampler
     rng::T
-    design::Matrix{Float64} # ndims × ho.n stratum centres in [0,1]; empty until init
+    design::Matrix{Float64}
 end
 
 LHSampler(; rng::Random.AbstractRNG=StableRNG(1)) = LHSampler(rng, Matrix{Float64}(undef, 0, 0))
@@ -20,8 +20,6 @@ function init(s::LHSampler, candidates, n)
     return LHSampler(s.rng, design)
 end
 
-# Only meaningful when full coverage is theoretically achievable (n >= product) -- a Latin
-# hypercube stratifies each dimension independently, so joint coverage isn't guaranteed.
 function _warn_missing_combinations(design::Matrix{Float64}, candidates)
     discrete_dims = findall(d -> d isa Union{Nominal,Ordinal}, candidates)
     isempty(discrete_dims) && return nothing

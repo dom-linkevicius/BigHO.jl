@@ -51,4 +51,4 @@ include("basic/persistence.jl")
 include("basic/dataframe.jl")
 include("basic/plotting.jl")
 
-end # module
+end

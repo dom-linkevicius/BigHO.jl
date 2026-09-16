@@ -9,10 +9,8 @@ mutable struct DistributedQueue <: AbstractExecutor
     results::Channel{Tuple{RunEntry,Any}}
     in_flight::Int
     pending_exception::Union{Exception,Nothing}
-    # Each trial's pid alongside its task, so shutdown! can kill the worker directly.
     tasks::Vector{Tuple{Int,Task}}
 
-    # Suppresses the default positional constructor, which would bypass validation below.
     function DistributedQueue(max_concurrency::Int, spawn_worker, setup_worker, teardown_timeout::Real, results::Channel{Tuple{RunEntry,Any}}, in_flight::Int, pending_exception::Union{Exception,Nothing}, tasks::Vector{Tuple{Int,Task}})
         max_concurrency >= 1 || throw(ArgumentError("max_concurrency must be >= 1, got $max_concurrency"))
         teardown_timeout > 0 ||
@@ -58,7 +56,6 @@ end
 
 function submit!(executor::DistributedQueue, entry::RunEntry, f)
     executor.in_flight += 1
-    # Synchronous, so the pid (or failure) is known before any task exists.
     worker = try
         executor.spawn_worker()
     catch e
@@ -66,12 +63,10 @@ function submit!(executor::DistributedQueue, entry::RunEntry, f)
         e
     end
     if worker isa Exception
-        # An ordinary Failed trial; no worker/task exists, so report it directly.
         put!(executor.results, (entry, worker))
         return nothing
     end
     t = @async begin
-        # Resolved and put! BEFORE teardown, so a later interrupt can't override it.
         outcome = try
             executor.setup_worker(worker)
             future = Distributed.remotecall(safe_call, worker, f, entry.params, entry.pre_artefact)
@@ -81,14 +76,12 @@ function submit!(executor::DistributedQueue, entry::RunEntry, f)
             e
         end
         put!(executor.results, (entry, outcome))
-        # Always torn down, even on failure -- a no-op if the worker's already gone.
         Distributed.rmprocs(worker; waitfor=executor.teardown_timeout)
     end
     push!(executor.tasks, (worker, t))
     return nothing
 end
 
-# Takes one result into out, unless it's an InterruptException (stashed on pending_exception instead).
 function _take_one!(executor::DistributedQueue, out)
     entry, outcome = take!(executor.results)
     executor.in_flight -= 1
@@ -100,9 +93,7 @@ function _take_one!(executor::DistributedQueue, out)
     return out
 end
 
-# Blocks for the first result only if something's in flight; drains any others already ready.
 function poll(executor::DistributedQueue)
-    # A pending exception from a PREVIOUS call is thrown first -- see poll(::Threaded).
     executor.pending_exception !== nothing && throw(executor.pending_exception)
     executor.in_flight == 0 && return Tuple{RunEntry,Any}[]
     out = _take_one!(executor, Tuple{RunEntry,Any}[])

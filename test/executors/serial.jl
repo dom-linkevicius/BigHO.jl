@@ -1,50 +1,33 @@
 @testset "Serial executor" begin
     @info "Testing Serial executor"
 
-    # submit! runs the objective synchronously, so a result is always ready
-    # immediately -- unlike Threaded, nothing is ever actually "in flight"
-    # from Serial's perspective.
     ex = Serial()
     BigHO.start!(ex, nothing)
     @test BigHO.capacity(ex) == 1
-    entry = BigHO.RunEntry(1, (a=1,), Float64[]) # no unit coordinate: built by hand, not by a sampler
+    entry = BigHO.RunEntry(1, (a=1,), Float64[])
     BigHO.submit!(ex, entry, p -> p.a)
-    @test BigHO.capacity(ex) == 0 # one already-completed result waiting to be polled
+    @test BigHO.capacity(ex) == 0
     out = BigHO.poll(ex)
     @test length(out) == 1
     @test out[1][1].id == 1
-    @test BigHO.capacity(ex) == 1 # draining the buffer frees capacity back up
+    @test BigHO.capacity(ex) == 1
     BigHO.shutdown!(ex)
 
-    # An InterruptException (e.g. Ctrl+C while a trial is running) must
-    # propagate out of safe_call rather than being caught and recorded as a
-    # failed trial -- run! doesn't try to handle it gracefully, it just
-    # rethrows it like any other error (ho.status = Errored). The interrupted
-    # trial itself is abandoned (never told an outcome), not left permanently
-    # Pending.
     let n_calls = Ref(0)
         global interrupt_after_first(p) = (n_calls[] += 1; n_calls[] == 1 ? p.a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first, (a=Nominal([1, 2, 3]),); n=3)
     @test_throws InterruptException run!(ho_interrupt)
     @test ho_interrupt.status == BigHO.Errored
-    @test length(results(ho_interrupt)) == 1  # the trial before the interrupt completed normally
+    @test length(results(ho_interrupt)) == 1
     @test ho_interrupt.n_pending == 0
-    @test ho_interrupt.runs[2].status == BigHO.Abandoned # the interrupted trial itself
-    @test_throws ArgumentError run!(ho_interrupt) # an Errored optimizer can never be resumed
-    @test_throws ArgumentError settarget!(ho_interrupt, 10) # nor can its target be raised to feign otherwise
+    @test ho_interrupt.runs[2].status == BigHO.Abandoned
+    @test_throws ArgumentError run!(ho_interrupt)
+    @test_throws ArgumentError settarget!(ho_interrupt, 10)
 
-    # Regression: ask!/tell! (the manual API) must refuse a terminal
-    # Hyperoptimizer too -- otherwise they're a backdoor around the
-    # "Errored is permanent" guarantee run!/settarget! enforce, letting new
-    # trials get silently asked and told on an optimizer that's supposed to
-    # be done.
     @test_throws ArgumentError BigHO.ask!(ho_interrupt)
-    @test_throws ArgumentError BigHO.tell!(ho_interrupt, ho_interrupt.runs[2], 42) # even for its own abandoned entry
+    @test_throws ArgumentError BigHO.tell!(ho_interrupt, ho_interrupt.runs[2], 42)
 
-    # Correctness: enough trials relative to the grid size (~500x oversampling
-    # per candidate) to find the true optimum with overwhelming probability
-    # regardless of RNG state, without depending on exact draw-position luck.
     g(p) = (p.a - 7)^2 + (p.b - 3)^2
     ho_exact = Hyperoptimizer(g, (a=Ordinal(0:10), b=Ordinal(0:10)); n=6000)
     run!(ho_exact; executor=Serial())
