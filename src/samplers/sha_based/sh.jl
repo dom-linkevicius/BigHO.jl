@@ -148,7 +148,7 @@ _sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(
 function init(s::SuccessiveHalving{Sync}, candidates, n) where {Sync}
     inner = init(s.inner, candidates, _total_draws(s))
     return SuccessiveHalving{Sync,typeof(inner)}(s.R, s.r_min, s.η, s.iterations, inner,
-                                                 ActiveBracket[], Ref((1, 0)))
+                                                 ActiveBracket[], Ref(1), Ref(0))
 end
 exhausted(s::SuccessiveHalving, ho) = _manage_decide!(s, ho.runs) isa SHDecision{:exhausted}
 blocked(s::SuccessiveHalving, ho) = _manage_decide!(s, ho.runs) isa SHDecision{:wait}
