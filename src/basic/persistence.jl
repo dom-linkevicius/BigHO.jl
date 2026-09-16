@@ -3,8 +3,17 @@
 """
 function load_hyperoptimizer(objective, path::AbstractString)
     saved = JLD2.jldopen(file -> file["ho"], path, "r")
+    runs = saved.runs
+    abandoned = 0
+    for (i, entry) in enumerate(runs)
+        if entry.status === Pending
+            runs[i] = _with_result(entry, Abandoned, missing, entry.post_artefact)
+            abandoned += 1
+        end
+    end
+    abandoned > 0 && @warn "load_hyperoptimizer: $abandoned trial(s) were still in flight when this checkpoint was written, so their outcome was never recorded and never can be; marking them Abandoned so the run can continue"
     return Hyperoptimizer(saved.params, saved.candidates, saved.sampler, objective, saved.n,
-                           saved.runs, saved.completed, saved.n_pending, saved.status,
+                           runs, saved.completed, saved.n_pending - abandoned, saved.status,
                            saved.best_min_id, ReentrantLock())
 end
 

@@ -36,7 +36,6 @@ end
 
 function on_tell!(s::SHSync, runs, entry)
     bracket = _bracket_of(s, entry)
-    bracket === nothing && return nothing
     rung = entry.metadata[:rung]
     rung < length(bracket.rungs) || return nothing
     _rung_resolved(s, runs, bracket, rung) || return nothing

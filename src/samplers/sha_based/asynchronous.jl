@@ -47,7 +47,6 @@ end
 
 function on_tell!(s::SHAsync, runs, entry)
     bracket = _bracket_of(s, entry)
-    bracket === nothing && return nothing
     n_rungs = length(bracket.rungs)
 
     if all(rung -> _pending_count(runs, rung) == 0, bracket.rungs) && !_bracket_has_room(s, bracket, runs)

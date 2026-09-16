@@ -132,7 +132,9 @@ function _bracket_of(s::SuccessiveHalving, entry)
     idx = findfirst(s.active_brackets) do bracket
         bracket.iteration == entry.metadata[:iteration] && bracket.bracket == entry.metadata[:bracket]
     end
-    return idx === nothing ? nothing : s.active_brackets[idx]
+    idx === nothing &&
+        throw(ArgumentError("$(typeof(s)): trial $(entry.id) reports bracket $(entry.metadata[:bracket]) of iteration $(entry.metadata[:iteration]), which is no longer active; a bracket is only closed once none of its rungs has a pending trial"))
+    return s.active_brackets[idx]
 end
 
 _label(bracket::ActiveBracket) = "bracket $(bracket.bracket) of iteration $(bracket.iteration)"
