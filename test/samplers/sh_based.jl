@@ -138,15 +138,15 @@ end
         @test length(ho.runs) == ho.n
         @test ho.status == BigHO.Finished
 
-        shapes = [sort([(e.metadata[:bracket].bracket, e.metadata[:rung])
-                        for e in ho.runs if e.metadata[:bracket].iteration == t]) for t in 1:3]
+        shapes = [sort([(e.metadata[:bracket], e.metadata[:rung])
+                        for e in ho.runs if e.metadata[:iteration] == t]) for t in 1:3]
         @test all(!isempty, shapes)
         @test shapes[2] == shapes[1]
         @test shapes[3] == shapes[1]
 
         for e in ho.runs
             haskey(e.metadata, :promoted_from) || continue
-            @test ho.runs[e.metadata[:promoted_from]].metadata[:bracket].iteration == e.metadata[:bracket].iteration
+            @test ho.runs[e.metadata[:promoted_from]].metadata[:iteration] == e.metadata[:iteration]
         end
     end
 end
@@ -201,36 +201,47 @@ end
     @info "Testing Hyperband's promote-fewer-than-planned and abandon-on-total-wipeout logic"
 
     s = Hyperband(R=9, η=3, r_min=1)
+    b = BigHO._open_next!(s)
 
-    function rung1_entries(k, n_total, n_failed)
+    function rung1_entries(bracket, n_total, n_failed)
         runs = BigHO.RunEntry[]
         for idx in 1:n_total
-            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total], Dict{Symbol,Any}(:rung => 1, :bracket => BigHO.BracketId(1, k)))
+            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total],
+                               Dict{Symbol,Any}(:rung => 1, :iteration => 1, :bracket => 1))
             e = idx <= n_failed ? BigHO._with_result(e, BigHO.Failed, missing, nothing; error=NaN) :
                                    BigHO._with_result(e, BigHO.Completed, Float64(idx), nothing)
             push!(runs, e)
+            push!(bracket.rungs[1].ids, idx)
         end
         return runs
     end
 
-    runs = rung1_entries(1, 9, 7)
+    runs = rung1_entries(b, 9, 7)
     logs, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, runs, runs[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("promoting fewer than planned", l.message), logs) == 1
-    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), runs) == BigHO._promote(BigHO.BracketId(1, 1), 1, 8)
+    d = BigHO._bracket_decision(s, b, runs)
+    @test d isa BigHO.SHDecision{:promote} && d.rung.rung == 1 && d.promoted_from == 8
 
-    push!(runs, BigHO.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket => BigHO.BracketId(1, 1))))
-    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), runs) == BigHO._promote(BigHO.BracketId(1, 1), 1, 9)
-    push!(runs, BigHO.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :bracket => BigHO.BracketId(1, 1))))
-    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), runs) == BigHO._wait()
+    push!(runs, BigHO.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :iteration => 1, :bracket => 1)))
+    push!(b.rungs[2].ids, 10)
+    d = BigHO._bracket_decision(s, b, runs)
+    @test d isa BigHO.SHDecision{:promote} && d.promoted_from == 9
+    push!(runs, BigHO.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :iteration => 1, :bracket => 1)))
+    push!(b.rungs[2].ids, 11)
+    @test BigHO._bracket_decision(s, b, runs) isa BigHO.SHDecision{:wait}
 
-    wiped = rung1_entries(1, 9, 9)
+    s2 = Hyperband(R=9, η=3, r_min=1)
+    b2 = BigHO._open_next!(s2)
+    wiped = rung1_entries(b2, 9, 9)
     logs2, _ = Test.collect_test_logs() do
-        BigHO.on_tell!(s, wiped, wiped[end])
+        BigHO.on_tell!(s2, wiped, wiped[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("abandoning it", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), wiped) == BigHO._draw(BigHO.BracketId(1, 2), 1)
+    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:done}
+    moved = BigHO._decide!(s2, wiped)
+    @test moved isa BigHO.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
 
     flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
     outcomes = map((Serial(), Threaded(4))) do executor
@@ -268,32 +279,39 @@ end
     @info "Testing ASHA's on_tell! bracket-stalled and rung-completed-with-failure warnings"
 
     s = ASHA(R=9, η=3, r_min=1)
+    b = BigHO._open_next!(s)
 
-    function rung1_entries(k, n_total, n_failed)
+    function rung1_entries(bracket, n_total, n_failed)
         runs = BigHO.RunEntry[]
         for idx in 1:n_total
-            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total], Dict{Symbol,Any}(:rung => 1, :bracket => BigHO.BracketId(1, k)))
+            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total],
+                               Dict{Symbol,Any}(:rung => 1, :iteration => 1, :bracket => 1))
             e = idx <= n_failed ? BigHO._with_result(e, BigHO.Failed, missing, nothing; error=NaN) :
                                    BigHO._with_result(e, BigHO.Completed, Float64(idx), nothing)
             push!(runs, e)
+            push!(bracket.rungs[1].ids, idx)
         end
         return runs
     end
 
-    partial = rung1_entries(1, 9, 1)
+    partial = rung1_entries(b, 9, 1)
     logs1, _ = Test.collect_test_logs() do
         BigHO.on_tell!(s, partial, partial[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("completed with at least one failed trial", l.message), logs1) == 1
     @test count(l -> l.level == Logging.Warn && occursin("stalled", l.message), logs1) == 0
 
-    wiped = rung1_entries(1, 9, 9)
+    s2 = ASHA(R=9, η=3, r_min=1)
+    b2 = BigHO._open_next!(s2)
+    wiped = rung1_entries(b2, 9, 9)
     logs2, _ = Test.collect_test_logs() do
-        BigHO.on_tell!(s, wiped, wiped[end])
+        BigHO.on_tell!(s2, wiped, wiped[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("bracket 1 of iteration 1 stalled at 9/13", l.message), logs2) == 1
     @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 1 of iteration 1 completed with at least one failed trial", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s, BigHO.BracketId(1, 1), wiped) == BigHO._draw(BigHO.BracketId(1, 2), 1)
+    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:done}
+    moved = BigHO._decide!(s2, wiped)
+    @test moved isa BigHO.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
 
     flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
     for (label, executor) in (("Serial", Serial()), ("Threaded", Threaded(4)))
