@@ -239,8 +239,8 @@ end
         BigHO.on_tell!(s2, wiped, wiped[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("abandoning it", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:done}
-    moved = BigHO._decide!(s2, wiped)
+    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:exhausted}
+    moved = BigHO._manage_decide!(s2, wiped)
     @test moved isa BigHO.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
 
     flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
@@ -309,8 +309,8 @@ end
     end
     @test count(l -> l.level == Logging.Warn && occursin("bracket 1 of iteration 1 stalled at 9/13", l.message), logs2) == 1
     @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 1 of iteration 1 completed with at least one failed trial", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:done}
-    moved = BigHO._decide!(s2, wiped)
+    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:exhausted}
+    moved = BigHO._manage_decide!(s2, wiped)
     @test moved isa BigHO.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
 
     flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
