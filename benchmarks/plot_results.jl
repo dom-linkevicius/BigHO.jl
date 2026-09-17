@@ -13,7 +13,7 @@ const SHA_SAMPLER_NAMES = ("Hyperband", "ASHA")
 const Y_UPPER_LIMIT = 0.11
 const Y_TICK_EXPONENTS = [-3, -2, -1]
 const X_LOWER_LIMIT = 1e-1
-const X_UPPER_LIMIT = 500
+const X_UPPER_LIMIT = 600
 
 """
     _resample_to_grid(times, running_min, grid)
