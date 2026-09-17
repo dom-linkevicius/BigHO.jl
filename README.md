@@ -52,15 +52,13 @@ function noisy_bowl(p; pre_artefact=nothing)
     return total / n_done, (n_done, total)
 end
 
-# Named, not a closure: checkpoints store functions by name, so an anonymous `u -> 10.0^u`
-# would not survive a reload.
-log_uniform(u) = 10.0^u
-
+# `transform` must be a named function: checkpoints store functions by name, so an anonymous
+# `u -> 10.0^u` would not survive a reload.
 candidates = (
-    x=Continuous(-5.0, 5.0),                       # uniform over [-5, 5]
-    lr=Continuous(-4, -1; transform=log_uniform),  # log-uniform over [1e-4, 1e-1]
-    degree=Ordinal([1, 2, 3, 4, 5]),               # ordered, so 2 lies between 1 and 3
-    kernel=Nominal(["rbf", "linear"]),             # unordered, no level is "between" any other
+    x=Continuous(-5.0, 5.0),                  # uniform over [-5, 5]
+    lr=Continuous(-4, -1; transform=exp10),   # log-uniform over [1e-4, 1e-1]
+    degree=Ordinal([1, 2, 3, 4, 5]),          # ordered, so 2 lies between 1 and 3
+    kernel=Nominal(["rbf", "linear"]),        # unordered, no level is "between" any other
 )
 
 # iterations=2 replays the whole bracket schedule twice: 4 brackets, 138 trials in total.
