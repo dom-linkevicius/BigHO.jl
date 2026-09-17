@@ -33,8 +33,7 @@ SuccessiveHalving{true,<:DEHBSampler}(; R::Int, η::Int=3, r_min::Int=1, iterati
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, iterations=iterations,
                             inner=DEHBSampler(; F=F, crossover=crossover, rng=rng))
 
-_check_objective(s::DEHB, objective) =
-    objective isa Stateful && @warn "$(typeof(s)) with a Stateful objective: pre_artefact is only set on promotions in the first bracket of the first iteration; every other trial trains from scratch. post_artefact is recorded either way"
+_check_objective(s::DEHB, objective) = objective isa Stateful && @warn "$(typeof(s)) with a Stateful objective: pre_artefact is only set on promotions in the first bracket of the first iteration; every other trial trains from scratch. post_artefact is recorded either way"
 
 _subpop_size(s::DEHB, bracket::Int) = _capacity(s.R, s.r_min, s.η, bracket, 1)
 
@@ -85,8 +84,7 @@ _propose(d::SHDecision{:promote}, s::DEHB, candidates, runs) =
     _sample_sh_inner(s, candidates, runs, d)
 
 function _entry_for(d::SHDecision{:promote}, s::DEHB, ho, id, params, unit_params)
-    _init_bracket(d.bracket) &&
-        return @invoke _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
+    _init_bracket(d.bracket) && return @invoke _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
     target = d.bracket.rungs[d.rung.rung+1]
     return RunEntry(id, _add_r(params, target.resource), unit_params, _metadata(d.bracket, target.rung))
 end
