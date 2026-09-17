@@ -7,10 +7,11 @@ const OUTDIR = joinpath(@__DIR__, "..", "docs", "benchmarks")
 mkpath(OUTDIR)
 
 const REGRET_GRID_POINTS = 40
-const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA")
+const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA", "DEHB")
 const SAMPLER_COLORS = Dict(zip(SAMPLER_NAMES, Makie.wong_colors()))
 const SHA_SAMPLER_NAMES = ("Hyperband", "ASHA")
 const Y_UPPER_LIMIT = 0.11
+const Y_TICK_EXPONENTS = [-3, -2, -1]
 const X_LOWER_LIMIT = 1e-1
 const X_UPPER_LIMIT = 500
 
@@ -57,7 +58,7 @@ function plot_results(runs, metadata)
     legend_source = nothing
     for (row, ex_name, title_word) in ((1, :Serial, "Serial"), (2, :Threaded, "Threaded"))
         ax = Axis(fig[row, 1]; xlabel=(row == 2 ? "wall-clock time (s)" : ""),
-                  xscale=log10, yscale=log10,
+                  xscale=log10, yscale=log10, yticks=Makie.LogTicks(Y_TICK_EXPONENTS),
                   xminorticksvisible=true, xminorgridvisible=true, xminorticks=IntervalsBetween(9),
                   yminorticksvisible=true, yminorgridvisible=true, yminorticks=IntervalsBetween(9),
                   title="Wall-clock regret comparison -- $title_word ($regret_repeats repeats/combo, $(metadata.nthreads) threads)")

@@ -67,22 +67,41 @@ summaryplot(ho; figure_kwargs=(; size=(800, 400)))  # figure_kwargs/axis_kwargs/
 
 ## Internal benchmarking
 
-To check that the samplers and executors actually deliver what they promise, the repo benchmarks them against each other on a small MLP trained on the Titanic dataset (via `MLDatasets.jl`), minimizing validation loss over five hyperparameters: learning rate, number of dense layers, hidden width, activation, and L2 regularization strength.
+To check that the samplers and executors actually deliver what they promise, the repo runs two benchmarks: an artificial toy function taken from the literature, where the optimum is known and the published results can be compared against, and a real neural-network hyperparameter search, where wall-clock time and executor behaviour matter.
+
+### Stochastic Counting Ones
+
+This toy benchmark comes from [Falkner et al. (2018)](https://arxiv.org/abs/1807.01774) and is used in §5.1 of the [DEHB paper](https://arxiv.org/abs/2105.09821). The objective is
+
+$$f(x) = -\left(\sum_{x \in X_{cat}} x + \sum_{x \in X_{cont}} \mathbb{E}_b[B_{p=x}]\right)$$
+
+over 32 binary and 32 continuous hyperparameters, where the resource `b` is the number of Bernoulli samples used to estimate each continuous variable's mean, so a low-resource evaluation is a noisy one. The schedule is `r_min=9`, `R=729`, `η=3`, matching the paper, and regret is normalized as `(f(x) + d) / d` with `d = 64`, so 0 is the optimum and 1 the worst case.
+
+Each sampler is run 50 times. `RandomSampler` gets 10⁶ cumulative budget / b_max; `Hyperband` and `DEHB` get 10⁴.
+
+![Stochastic Counting Ones](docs/benchmarks/counting_ones_regret.png)
+
+This qualitatively reproduces Figure 6 of the DEHB paper. `DEHB` pulls away from the other two at around 10² and reaches a median normalized regret of 0.019 by 10⁴, while `RandomSampler` is still at 0.27 two orders of magnitude later, at 10⁶, and `Hyperband` sits at 0.29 at 10⁴. Cheap rungs alone buy nothing here — every configuration `Hyperband` promotes was still drawn at random, so it tracks random search. What separates `DEHB` is that its higher-resource subpopulations are evolved from configurations that already did well at lower resource.
+
+### Neural network hyperparameter search
+
+The second benchmark trains a small MLP on the Titanic dataset (via `MLDatasets.jl`), minimizing validation loss over five hyperparameters: learning rate, number of dense layers, hidden width, activation, and L2 regularization strength.
 
 The comparison is set up as "same budget, who gets there first":
-- `Hyperband` and `ASHA` run their own one-pass bracket schedule (`R=1215`, `η=3`, `r_min=5`, giving 6 brackets), where one resource unit is 6 training epochs — so a bottom-rung trial trains for 30 epochs and a top-rung one for 7290.
+- `Hyperband`, `ASHA` and `DEHB` run their own one-pass bracket schedule (`R=1215`, `η=3`, `r_min=5`, giving 6 brackets), where one resource unit is 6 training epochs — so a bottom-rung trial trains for 30 epochs and a top-rung one for 7290.
 - That schedule tries 415 distinct hyperparameter configurations and spends ~205k epochs in total, so `RandomSampler` and `LHSampler` are given exactly the same: 415 trials, with their per-trial epoch count set so the totals match. No sampler gets more compute than another — only the choice of how to spend it differs.
-- Every (sampler, executor) combination is repeated 30 times; the figure shows the median and interquartile range across those repeats.
+- Every (sampler, executor) combination is repeated 20 times; the figure shows the median and interquartile range across those repeats.
 
 "Regret" is a run's best-validation-loss-so-far minus the best loss seen across every run in the benchmark, since the true optimum of this problem isn't known analytically.
 
 ![Wall-clock regret comparison](docs/benchmarks/wallclock_regret_comparison.png)
 
 What the figure shows:
-- `Hyperband` and `ASHA` reach any given regret level substantially sooner than the full-budget samplers at equal total budget, in both executors. Cheap early rungs let them discard bad configurations before paying full price for them.
-- `LHSampler` beats `RandomSampler` under `Serial` — the space-filling design covers the space sooner than independent draws do. Under `Threaded` the two are indistinguishable: with 32 workers in flight, the order configurations are proposed in stops mattering.
-- `Threaded` completes the same work several times faster than `Serial` (32 threads used): ~10x for `RandomSampler` (353s → 35s per repeat) and `LHSampler` (339s → 34s), ~3.8x for `ASHA` (344s → 91s) and ~3.3x for `Hyperband` (349s → 106s). The full-budget samplers parallelize best because their trials are independent, whereas the successive-halving samplers have to resolve some trials before they can promote. On more difficult problems `ASHA` may beat `Hyperband` because it does not wait for the rung to complete fully.
-- On this simple benchmark all four converge to a similar final regret, the advantage of successive halving is how quickly it gets to a good configuration, not a better ceiling, as both `ASHA` and `Hyperband` still use `RandomSampler` internally.
+- The multi-fidelity samplers reach any given regret level sooner than the full-budget samplers at equal total budget, and they do so at every point in the run, in both executors. Cheap early rungs let them discard bad configurations before paying full price for them.
+- `LHSampler` starts better than `RandomSampler` under `Serial` — at one second the median regret is 0.037 against 0.064, since the space-filling design covers the space sooner than independent draws do. The advantage does not persist once both have drawn enough configurations, and neither leads consistently after that.
+- `Threaded` completes the same work several times faster than `Serial` (64 threads used): ~8.5x for `RandomSampler` (344s → 40s per repeat) and `LHSampler` (328s → 38s), ~3.3x for `ASHA` (324s → 97s), ~3.0x for `Hyperband` (327s → 110s) and ~3.1x for `DEHB` (440s → 141s). The full-budget samplers parallelize best because their trials are independent, whereas the successive-halving samplers have to resolve some trials before they can promote. `ASHA` finishes ahead of `Hyperband` under `Threaded` because it does not wait for a rung to complete fully.
+- `DEHB` is the most expensive per repeat, since only its first bracket promotes configurations unchanged — every later bracket evaluates a freshly evolved configuration that has to train from scratch.
+- Unlike Counting Ones, the final regrets end up close together (0.016 to 0.023 after 100 seconds of `Serial`). The search space here is small enough that random draws find good configurations quickly, so the advantage of successive halving is mostly how fast it gets there rather than a much better ceiling.
 
 You can find the benchmarking code in [`benchmarks/`](benchmarks/).
 
