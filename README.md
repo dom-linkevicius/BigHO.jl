@@ -18,16 +18,16 @@ The package currently implements the following samplers:
 - `LHSampler`, which is a Latin Hypercube sampler, aiming to maximally spread out `n` samples in the parameter space
 - `Hyperband`, which runs brackets of trials, using a different number of resources to train them and promoting best trials within a bracket, until the bracket reaches its resource limit
 - `ASHA`, which is the asynchronous version of Hyperband, also running brackets, but not requiring the completion of a bracket before trials are promoted
-- `DEHB`, which is a modified version of `Hyperband` where, after the first bracket, trials are not simply promoted between rungs but are evolved by differential evolution from the configurations that did well at the lower resource, which can reach a better ceiling on search spaces large enough to reward it
+- `DEHB`, a modified version of `Hyperband` where, after the first bracket, trials are not simply promoted between rungs but undergo  differential evolution and can reach a better ceiling on larger search spaces
 
 ## Convenience functionality
 
 BigHO.jl provides some convenience functionality, such as
-- tracking the status of individual trials, such that individual trial failures would not crash the whole optimization run, but should provide enough information to be reproducible
+- tracking the status of individual trials, such that individual trial failures would not crash the whole optimization run, but should provide enough information to diagnose and reproduce them
 - saving results after each `k` trials in a user specified directory, such that after unexpected crashes and failures it would be possible to easily resume an optimization run
-- conversion of a hyperparameter optimization results into a `DataFrames.DataFrame` for easier downstream analysis
+- conversion of hyperparameter optimization results into a `DataFrames.DataFrame` for easier downstream analysis
 - summary plotting (via a `CairoMakie` extension), showing scatter plots of the objective value against each hyperparameter (with marginal histograms), the objective value over trial id, and the best value found so far over trial id
-- `Stateful` optimization functions, which allow continuation of training from a previous state in samplers such as `Hyperband` or `ASHA`, amortizing some of the optimization costs
+- `Stateful` optimization functions, which allow continuation of training from a previous state in samplers such as `Hyperband` or `ASHA`, amortizing some of the optimization costs, as well as allowing saving of data of interest via the `post_artefact`
 
 ## Sample code
 
