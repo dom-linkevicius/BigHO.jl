@@ -9,60 +9,60 @@ SuccessiveHalving{false,<:BasicSamplers}(; R::Int, η::Int=3, r_min::Int=1, iter
                                          inner::BasicSamplers=RandomSampler()) =
     SuccessiveHalving{false}(; R=R, η=η, r_min=r_min, iterations=iterations, inner=inner)
 
-_n_promotable(s::SHAsync, runs, k::BracketId, i::Int) =
-    min(floor(Int, length(_told_sorted(runs, k, i)) / s.η), _capacity(s.R, s.r_min, s.η, k.bracket, i + 1))
+_n_promotable(s::SHAsync, runs, bracket::ActiveBracket, rung::Int) =
+    min(floor(Int, length(_told_sorted(runs, bracket.rungs[rung])) / s.η), bracket.rungs[rung+1].capacity)
 
-function _bracket_decision(s::SHAsync, k::BracketId, runs)
-    R, r_min, η = s.R, s.r_min, s.η
-    n_rungs = _n_rungs(R, r_min, η, k.bracket)
-    for i in (n_rungs-1):-1:1
-        promoted = _promoted_ids(runs, k, i)
-        if length(promoted) < _n_promotable(s, runs, k, i)
-            told = _told_sorted(runs, k, i)
+function _bracket_decision(s::SHAsync, bracket::ActiveBracket, runs)
+    n_rungs = length(bracket.rungs)
+    for rung in (n_rungs-1):-1:1
+        promoted = _promoted_ids(runs, bracket.rungs[rung+1])
+        if length(promoted) < _n_promotable(s, runs, bracket, rung)
+            told = _told_sorted(runs, bracket.rungs[rung])
             id, _ = first(t for t in told if first(t) ∉ promoted)
-            return _promote(k, i, id)
+            return _promote(bracket, bracket.rungs[rung], id)
         end
     end
-    _dispatched_count(runs, k, 1) < _capacity(R, r_min, η, k.bracket, 1) && return _draw(k, 1)
-    any(i -> _pending_count(runs, k, i) > 0, 1:n_rungs) && return _wait()
-    return _fallback_bracket(s, k, runs)
+    _dispatched_count(bracket.rungs[1]) < bracket.rungs[1].capacity && return _draw(bracket, bracket.rungs[1])
+    any(rung -> _pending_count(runs, rung) > 0, bracket.rungs) && return _wait()
+    return _exhausted()
 end
 
-function _bracket_has_room(s::SHAsync, k::BracketId, runs)
-    _dispatched_count(runs, k, 1) < _capacity(s.R, s.r_min, s.η, k.bracket, 1) && return true
-    return any(i -> length(_promoted_ids(runs, k, i)) < _n_promotable(s, runs, k, i), 1:(_n_rungs(s.R, s.r_min, s.η, k.bracket)-1))
+function _bracket_has_room(s::SHAsync, bracket::ActiveBracket, runs)
+    _dispatched_count(bracket.rungs[1]) < bracket.rungs[1].capacity && return true
+    return any(rung -> length(_promoted_ids(runs, bracket.rungs[rung+1])) < _n_promotable(s, runs, bracket, rung),
+               1:(length(bracket.rungs)-1))
 end
 
-function _rung_resolved(s::SHAsync, runs, k::BracketId, i::Int)
-    dispatch_final = if _dispatched_count(runs, k, i) >= _capacity(s.R, s.r_min, s.η, k.bracket, i)
+function _rung_resolved(s::SHAsync, runs, bracket::ActiveBracket, rung::Int)
+    dispatch_final = if _dispatched_count(bracket.rungs[rung]) == bracket.rungs[rung].capacity
         true
-    elseif i == 1
+    elseif rung == 1
         false
     else
-        _rung_resolved(s, runs, k, i - 1) && _dispatched_count(runs, k, i) >= _n_promotable(s, runs, k, i - 1)
+        _rung_resolved(s, runs, bracket, rung - 1) &&
+            _dispatched_count(bracket.rungs[rung]) == _n_promotable(s, runs, bracket, rung - 1)
     end
-    return dispatch_final && _pending_count(runs, k, i) == 0
+    return dispatch_final && _pending_count(runs, bracket.rungs[rung]) == 0
 end
 
 function on_tell!(s::SHAsync, runs, entry)
-    k = entry.metadata[:bracket]
-    R, r_min, η = s.R, s.r_min, s.η
-    n_rungs = _n_rungs(R, r_min, η, k.bracket)
+    bracket = _bracket_of(s, entry)
+    n_rungs = length(bracket.rungs)
 
-    if all(i -> _pending_count(runs, k, i) == 0, 1:n_rungs) && !_bracket_has_room(s, k, runs)
-        total_capacity = sum(_capacity(R, r_min, η, k.bracket, i) for i in 1:n_rungs)
-        total_dispatched = sum(_dispatched_count(runs, k, i) for i in 1:n_rungs)
-        total_dispatched < total_capacity && @warn "$(typeof(s)): $(_label(k)) stalled at $total_dispatched/$total_capacity trials dispatched -- no rung can accept more"
+    if all(rung -> _pending_count(runs, rung) == 0, bracket.rungs) && !_bracket_has_room(s, bracket, runs)
+        total_capacity = sum(rung.capacity for rung in bracket.rungs)
+        total_dispatched = sum(_dispatched_count(rung) for rung in bracket.rungs)
+        total_dispatched < total_capacity && @warn "$(typeof(s)): $(_label(bracket)) stalled at $total_dispatched/$total_capacity trials dispatched -- no rung can accept more"
     end
 
     resolved_before = false
-    for i in entry.metadata[:rung]:n_rungs
-        if _rung_resolved(s, runs, k, i)
-            resolved_before || _rung_has_failure(runs, k, i) && @warn "$(typeof(s)): rung $i of $(_label(k)) completed with at least one failed trial"
+    for rung in entry.metadata[:rung]:n_rungs
+        if _rung_resolved(s, runs, bracket, rung)
+            resolved_before || _rung_has_failure(runs, bracket.rungs[rung]) && @warn "$(typeof(s)): rung $rung of $(_label(bracket)) completed with at least one failed trial"
         end
-        i == n_rungs && break
-        resolved_before = _dispatched_count(runs, k, i + 1) >= _capacity(R, r_min, η, k.bracket, i + 1) ||
-                          (resolved_before && _dispatched_count(runs, k, i + 1) >= _n_promotable(s, runs, k, i))
+        rung == n_rungs && break
+        resolved_before = _dispatched_count(bracket.rungs[rung+1]) == bracket.rungs[rung+1].capacity ||
+                          (resolved_before && _dispatched_count(bracket.rungs[rung+1]) == _n_promotable(s, runs, bracket, rung))
     end
     return nothing
 end

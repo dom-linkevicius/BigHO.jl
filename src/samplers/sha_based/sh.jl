@@ -1,10 +1,27 @@
+struct ActiveRung
+    rung::Int
+    capacity::Int
+    resource::Int
+    ids::Vector{Int}
+end
+
+struct ActiveBracket
+    iteration::Int
+    bracket::Int
+    rungs::Vector{ActiveRung}
+end
+
 struct SuccessiveHalving{Sync,S<:Sampler} <: Sampler
     R::Int
     r_min::Int
     η::Int
     iterations::Int
     inner::S
+    active_brackets::Vector{ActiveBracket}
+    current_itr::Ref{Int}
+    last_bracket::Ref{Int}
 end
+
 function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, iterations::Int=1,
                                  inner::Sampler=RandomSampler()) where {Sync}
     R > 0 || throw(ArgumentError("R must be positive, got $R"))
@@ -15,60 +32,78 @@ function SuccessiveHalving{Sync}(; R::Int, η::Int=3, r_min::Int=1, iterations::
     r_top = r_min * η^_smax(R, r_min, η)
     r_top == R ||
         @warn "SuccessiveHalving: the top resource level reached is $r_top, short of the requested R=$R -- smax=⌊log_η(R/r_min)⌋ floors to the nearest integer, so the schedule only lands exactly on R when R/r_min is an exact power of η"
-    return SuccessiveHalving{Sync,typeof(inner)}(R, r_min, η, iterations, inner)
+    return SuccessiveHalving{Sync,typeof(inner)}(R, r_min, η, iterations, inner, ActiveBracket[], Ref(1), Ref(0))
 end
 
 _add_r(params::NamedTuple, r::Int) = merge((r=r,), params)
 
 _smax(R::Int, r_min::Int, η::Int) = ndigits(R ÷ r_min; base=η) - 1
-_n_rungs(R::Int, r_min::Int, η::Int, k::Int) = _smax(R, r_min, η) + 2 - k
-function _capacity(R::Int, r_min::Int, η::Int, k::Int, i::Int)
+_n_rungs(R::Int, r_min::Int, η::Int, bracket::Int) = _smax(R, r_min, η) + 2 - bracket
+function _capacity(R::Int, r_min::Int, η::Int, bracket::Int, rung::Int)
     smax = _smax(R, r_min, η)
-    n0 = ceil(Int, (smax + 1) * η^(smax + 1 - k) / _n_rungs(R, r_min, η, k))
-    return max(1, floor(Int, n0 / η^(i - 1)))
+    n0 = ceil(Int, (smax + 1) * η^(smax + 1 - bracket) / _n_rungs(R, r_min, η, bracket))
+    return max(1, floor(Int, n0 / η^(rung - 1)))
 end
-_resource(::Int, r_min::Int, η::Int, k::Int, i::Int) = r_min * η^(k + i - 2)
+_resource(::Int, r_min::Int, η::Int, bracket::Int, rung::Int) = r_min * η^(bracket + rung - 2)
 
-struct BracketId
-    iteration::Int
-    bracket::Int
-end
-_label(k::BracketId) = "bracket $(k.bracket) of iteration $(k.iteration)"
-
-_at_rung(e, k::BracketId, i::Int) = e.metadata[:bracket] == k && e.metadata[:rung] == i
-_dispatched_count(runs, k::BracketId, i::Int) = count(e -> _at_rung(e, k, i), runs)
-_promoted_ids(runs, k::BracketId, i::Int) =
-    Set(e.metadata[:promoted_from] for e in runs if _at_rung(e, k, i + 1))
-_told_sorted(runs, k::BracketId, i::Int) =
-    sort([(e.id, e.value) for e in runs if e.status === Completed && _at_rung(e, k, i)]; by=last)
-_pending_count(runs, k::BracketId, i::Int) = count(e -> e.status === Pending && _at_rung(e, k, i), runs)
-_rung_has_failure(runs, k::BracketId, i::Int) = any(e -> e.status === Failed && _at_rung(e, k, i), runs)
 function _total_trials(R::Int, r_min::Int, η::Int)
     smax = _smax(R, r_min, η)
-    return sum(_capacity(R, r_min, η, k, i) for k in 1:(smax+1) for i in 1:_n_rungs(R, r_min, η, k))
+    return sum(_capacity(R, r_min, η, bracket, rung)
+               for bracket in 1:(smax+1) for rung in 1:_n_rungs(R, r_min, η, bracket))
 end
 function _total_draws(R::Int, r_min::Int, η::Int)
     smax = _smax(R, r_min, η)
-    return sum(_capacity(R, r_min, η, k, 1) for k in 1:(smax+1))
+    return sum(_capacity(R, r_min, η, bracket, 1) for bracket in 1:(smax+1))
 end
 _total_trials(s::SuccessiveHalving) = s.iterations * _total_trials(s.R, s.r_min, s.η)
 _total_draws(s::SuccessiveHalving) = s.iterations * _total_draws(s.R, s.r_min, s.η)
 
+_dispatched_count(rung::ActiveRung) = length(rung.ids)
+_pending_count(runs, rung::ActiveRung) = count(id -> runs[id].status === Pending, rung.ids)
+_rung_has_failure(runs, rung::ActiveRung) = any(id -> runs[id].status === Failed, rung.ids)
+_told_sorted(runs, rung::ActiveRung) =
+    sort([(id, runs[id].value) for id in rung.ids if runs[id].status === Completed]; by=last)
+_promoted_ids(runs, rung::ActiveRung) = Set(runs[id].metadata[:promoted_from] for id in rung.ids)
+
+function _make_bracket(s::SuccessiveHalving, iteration::Int, bracket::Int)
+    rungs = [ActiveRung(rung, _capacity(s.R, s.r_min, s.η, bracket, rung),
+                        _resource(s.R, s.r_min, s.η, bracket, rung), Int[])
+             for rung in 1:_n_rungs(s.R, s.r_min, s.η, bracket)]
+    return ActiveBracket(iteration, bracket, rungs)
+end
+
+function _open_next!(s::SuccessiveHalving)
+    if s.last_bracket[] < _smax(s.R, s.r_min, s.η) + 1
+        s.last_bracket[] += 1
+    elseif s.current_itr[] < s.iterations
+        s.current_itr[] += 1
+        s.last_bracket[] = 1
+    else
+        return nothing
+    end
+    push!(s.active_brackets, _make_bracket(s, s.current_itr[], s.last_bracket[]))
+    return last(s.active_brackets)
+end
+
 struct SHDecision{K}
-    bracket_id::Union{BracketId,Missing}
-    rung::Union{Int,Missing}
+    bracket::Union{ActiveBracket,Missing}
+    rung::Union{ActiveRung,Missing}
     promoted_from::Union{Int,Missing}
 end
 
-_draw(bracket_id::BracketId, rung::Int) = SHDecision{:draw}(bracket_id, rung, missing)
-_promote(bracket_id::BracketId, rung::Int, promoted_from::Int) = SHDecision{:promote}(bracket_id, rung, promoted_from)
+_draw(bracket::ActiveBracket, rung::ActiveRung) = SHDecision{:draw}(bracket, rung, missing)
+_promote(bracket::ActiveBracket, rung::ActiveRung, promoted_from::Int) =
+    SHDecision{:promote}(bracket, rung, promoted_from)
 _wait() = SHDecision{:wait}(missing, missing, missing)
 _exhausted() = SHDecision{:exhausted}(missing, missing, missing)
 
-function _fallback_bracket(s::SuccessiveHalving, k::BracketId, runs)
-    k.bracket < _smax(s.R, s.r_min, s.η) + 1 && return _bracket_decision(s, BracketId(k.iteration, k.bracket + 1), runs)
-    k.iteration < s.iterations && return _bracket_decision(s, BracketId(k.iteration + 1, 1), runs)
-    return _exhausted()
+function _manage_decide!(s::SuccessiveHalving, runs)
+    while true
+        isempty(s.active_brackets) && _open_next!(s) === nothing && return _exhausted()
+        decision = _bracket_decision(s, first(s.active_brackets), runs)
+        decision isa SHDecision{:exhausted} || return decision
+        popfirst!(s.active_brackets)
+    end
 end
 
 _propose(d::SHDecision{:draw}, s::SuccessiveHalving, candidates, runs) = _sample_sh_inner(s, candidates, runs, d)
@@ -78,20 +113,34 @@ _propose(::SHDecision{:wait}, s::SuccessiveHalving, candidates, runs) =
 _propose(::SHDecision{:exhausted}, s::SuccessiveHalving, candidates, runs) =
     throw(ArgumentError("$(typeof(s)) has finished all $(s.iterations) iterations of its schedule and can propose nothing further; `exhausted` reports this"))
 
+_metadata(bracket::ActiveBracket, rung::Int) =
+    Dict{Symbol,Any}(:iteration => bracket.iteration, :bracket => bracket.bracket, :rung => rung)
+
 function _entry_for(d::SHDecision{:draw}, s::SuccessiveHalving, ho, id, params, unit_params)
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket_id.bracket, d.rung))
-    return RunEntry(id, with_r, unit_params, Dict{Symbol,Any}(:rung => d.rung, :bracket => d.bracket_id))
+    return RunEntry(id, _add_r(params, d.rung.resource), unit_params, _metadata(d.bracket, d.rung.rung))
 end
 
 function _entry_for(d::SHDecision{:promote}, s::SuccessiveHalving, ho, id, params, unit_params)
-    with_r = _add_r(params, _resource(s.R, s.r_min, s.η, d.bracket_id.bracket, d.rung + 1))
-    metadata = Dict{Symbol,Any}(:rung => d.rung + 1, :bracket => d.bracket_id, :promoted_from => d.promoted_from)
-    return RunEntry(id, with_r, unit_params, metadata; pre_artefact=ho.runs[d.promoted_from].post_artefact)
+    target = d.bracket.rungs[d.rung.rung+1]
+    metadata = _metadata(d.bracket, target.rung)
+    metadata[:promoted_from] = d.promoted_from
+    return RunEntry(id, _add_r(params, target.resource), unit_params, metadata;
+                    pre_artefact=ho.runs[d.promoted_from].post_artefact)
 end
 
+function _bracket_of(s::SuccessiveHalving, entry)
+    idx = findfirst(s.active_brackets) do bracket
+        bracket.iteration == entry.metadata[:iteration] && bracket.bracket == entry.metadata[:bracket]
+    end
+    idx === nothing &&
+        throw(ArgumentError("$(typeof(s)): trial $(entry.id) reports bracket $(entry.metadata[:bracket]) of iteration $(entry.metadata[:iteration]), which is no longer active; a bracket is only closed once none of its rungs has a pending trial"))
+    return s.active_brackets[idx]
+end
+
+_label(bracket::ActiveBracket) = "bracket $(bracket.bracket) of iteration $(bracket.iteration)"
+
 function (s::SuccessiveHalving)(candidates, runs)
-    dec = _bracket_decision(s, BracketId(1, 1), runs)
-    return _propose(dec, s, candidates, runs)
+    return _propose(_manage_decide!(s, runs), s, candidates, runs)
 end
 
 _sample_sh_inner(s::SuccessiveHalving, candidates, runs, ::SHDecision{:draw}) = _sample_sh_inner(s.inner, candidates, runs)
@@ -100,12 +149,24 @@ _sample_sh_inner(inner::LHSampler, candidates, runs) = inner(candidates, filter(
 
 function init(s::SuccessiveHalving{Sync}, candidates, n) where {Sync}
     inner = init(s.inner, candidates, _total_draws(s))
-    return SuccessiveHalving{Sync,typeof(inner)}(s.R, s.r_min, s.η, s.iterations, inner)
+    return SuccessiveHalving{Sync,typeof(inner)}(s.R, s.r_min, s.η, s.iterations, inner,
+                                                 ActiveBracket[], Ref(1), Ref(0))
 end
-exhausted(s::SuccessiveHalving, ho) = _bracket_decision(s, BracketId(1, 1), ho.runs) isa SHDecision{:exhausted}
-blocked(s::SuccessiveHalving, ho) = _bracket_decision(s, BracketId(1, 1), ho.runs) isa SHDecision{:wait}
+exhausted(s::SuccessiveHalving, ho) = _manage_decide!(s, ho.runs) isa SHDecision{:exhausted}
+blocked(s::SuccessiveHalving, ho) = _manage_decide!(s, ho.runs) isa SHDecision{:wait}
+
+function _record!(bracket::ActiveBracket, rung::ActiveRung, id::Int)
+    length(rung.ids) < rung.capacity ||
+        throw(ArgumentError("$(_label(bracket)) rung $(rung.rung) already holds its capacity of $(rung.capacity) trials; dispatching another would break the schedule"))
+    push!(rung.ids, id)
+    return nothing
+end
+_record!(d::SHDecision{:draw}, id::Int) = _record!(d.bracket, d.rung, id)
+_record!(d::SHDecision{:promote}, id::Int) = _record!(d.bracket, d.bracket.rungs[d.rung.rung+1], id)
 
 function create_run_entry(s::SuccessiveHalving, ho, id, params, unit_params)
-    action = _bracket_decision(s, BracketId(1, 1), ho.runs)
-    return _entry_for(action, s, ho, id, params, unit_params)
+    decision = _manage_decide!(s, ho.runs)
+    entry = _entry_for(decision, s, ho, id, params, unit_params)
+    _record!(decision, id)
+    return entry
 end

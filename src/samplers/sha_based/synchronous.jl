@@ -9,44 +9,42 @@ SuccessiveHalving{true,<:BasicSamplers}(; R::Int, η::Int=3, r_min::Int=1, itera
                                         inner::BasicSamplers=RandomSampler()) =
     SuccessiveHalving{true}(; R=R, η=η, r_min=r_min, iterations=iterations, inner=inner)
 
-function _bracket_decision(s::SHSync, k::BracketId, runs)
-    R, r_min, η = s.R, s.r_min, s.η
-    n_rungs = _n_rungs(R, r_min, η, k.bracket)
-    _dispatched_count(runs, k, 1) < _capacity(R, r_min, η, k.bracket, 1) && return _draw(k, 1)
-    for i in 1:(n_rungs-1)
-        _rung_resolved(s, runs, k, i) || return _wait()
-        told = _told_sorted(runs, k, i)
-        target = min(_capacity(R, r_min, η, k.bracket, i + 1), length(told))
-        target == 0 && return _fallback_bracket(s, k, runs)
-        n_promoted = _dispatched_count(runs, k, i + 1)
-        n_promoted < target && return _promote(k, i, first(told[n_promoted+1]))
+function _bracket_decision(s::SHSync, bracket::ActiveBracket, runs)
+    n_rungs = length(bracket.rungs)
+    _dispatched_count(bracket.rungs[1]) < bracket.rungs[1].capacity && return _draw(bracket, bracket.rungs[1])
+    for rung in 1:(n_rungs-1)
+        _rung_resolved(s, runs, bracket, rung) || return _wait()
+        told = _told_sorted(runs, bracket.rungs[rung])
+        n_to_promote = min(bracket.rungs[rung+1].capacity, length(told))
+        n_to_promote == 0 && return _exhausted()
+        n_promoted = _dispatched_count(bracket.rungs[rung+1])
+        n_promoted < n_to_promote && return _promote(bracket, bracket.rungs[rung], first(told[n_promoted+1]))
     end
-    _rung_resolved(s, runs, k, n_rungs) || return _wait()
-    return _fallback_bracket(s, k, runs)
+    _rung_resolved(s, runs, bracket, n_rungs) || return _wait()
+    return _exhausted()
 end
 
-function _rung_resolved(s::SHSync, runs, k::BracketId, i::Int)
-    R, r_min, η = s.R, s.r_min, s.η
-    if i == 1
-        target = _capacity(R, r_min, η, k.bracket, 1)
+function _rung_resolved(s::SHSync, runs, bracket::ActiveBracket, rung::Int)
+    if rung == 1
+        n_expected = bracket.rungs[1].capacity
     else
-        _rung_resolved(s, runs, k, i - 1) || return false
-        target = min(_capacity(R, r_min, η, k.bracket, i), length(_told_sorted(runs, k, i - 1)))
+        _rung_resolved(s, runs, bracket, rung - 1) || return false
+        n_expected = min(bracket.rungs[rung].capacity, length(_told_sorted(runs, bracket.rungs[rung-1])))
     end
-    return _dispatched_count(runs, k, i) >= target && _pending_count(runs, k, i) == 0
+    return _dispatched_count(bracket.rungs[rung]) == n_expected && _pending_count(runs, bracket.rungs[rung]) == 0
 end
 
 function on_tell!(s::SHSync, runs, entry)
-    k = entry.metadata[:bracket]
-    i = entry.metadata[:rung]
-    i < _n_rungs(s.R, s.r_min, s.η, k.bracket) || return nothing
-    _rung_resolved(s, runs, k, i) || return nothing
-    told = _told_sorted(runs, k, i)
+    bracket = _bracket_of(s, entry)
+    rung = entry.metadata[:rung]
+    rung < length(bracket.rungs) || return nothing
+    _rung_resolved(s, runs, bracket, rung) || return nothing
+    told = _told_sorted(runs, bracket.rungs[rung])
     if isempty(told)
-        @warn "$(typeof(s)): every trial at rung $i of $(_label(k)) failed -- abandoning it"
+        @warn "$(typeof(s)): every trial at rung $rung of $(_label(bracket)) failed -- abandoning it"
     else
-        wanted = _capacity(s.R, s.r_min, s.η, k.bracket, i + 1)
-        length(told) < wanted && @warn "$(typeof(s)): only $(length(told))/$wanted trials completed at rung $i of $(_label(k)) -- promoting fewer than planned into rung $(i + 1)"
+        wanted = bracket.rungs[rung+1].capacity
+        length(told) < wanted && @warn "$(typeof(s)): only $(length(told))/$wanted trials completed at rung $rung of $(_label(bracket)) -- promoting fewer than planned into rung $(rung + 1)"
     end
     return nothing
 end
