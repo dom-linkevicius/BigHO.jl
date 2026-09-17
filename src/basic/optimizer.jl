@@ -38,9 +38,7 @@ end
 function Hyperoptimizer(objective, candidates::NamedTuple, sampler::SuccessiveHalving)
     haskey(candidates, :r) &&
         throw(ArgumentError("Hyperoptimizer: `:r` is reserved for $(typeof(sampler))'s resource level -- rename your `:r` candidate"))
-    objective isa Stateful || objective === nothing || @warn "$(typeof(sampler)) with a non-Stateful objective: promoted trials can't " *
-                                                             "resume from a previous trial's state, so each promotion re-pays all the resource already spent on it -- " *
-                                                             "wrap the objective in `Stateful` to make promotions continue instead of restart"
+    _check_objective(sampler, objective)
     n = _total_trials(sampler)
     return Hyperoptimizer(objective, candidates; sampler=sampler, n=n)
 end

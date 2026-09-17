@@ -8,11 +8,11 @@ _log(msg) = (println(msg); flush(stdout))
 const RESULTS_PATH = joinpath(@__DIR__, "results.jld2")
 
 const CANDIDATES = (
-    lr=Continuous(1e-3, 5e-2),
+    lr=Continuous(-5, -1; transform=x -> 10.0^x),
     n_dense_layers=Ordinal([1, 2, 3]),
     hidden=Ordinal([8, 16, 32, 64]),
     activation=Nominal([tanh, relu]),
-    reg=Continuous(0.0, 1e-2),
+    reg=Continuous(-6, -1; transform=x -> 10.0^x),
 )
 
 const ETA = 3
@@ -35,7 +35,7 @@ end
 const PLAIN_OBJ = Stateful(nn_objective)
 const SH_OBJ = Stateful(nn_objective_stateful)
 
-const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA")
+const SAMPLER_NAMES = ("Random", "LHS", "Hyperband", "ASHA", "DEHB")
 const EXECUTORS = (Serial=Serial(), Threaded=Threaded())
 
 const SHA_INNER = RandomSampler()
@@ -45,6 +45,7 @@ const MAKE_HYPEROPTIMIZER = Dict(
     "LHS" => () -> Hyperoptimizer(PLAIN_OBJ, CANDIDATES; sampler=LHSampler(), n=N_TRIALS),
     "Hyperband" => () -> Hyperoptimizer(SH_OBJ, CANDIDATES, Hyperband(R=R_MAX, η=ETA, r_min=R_MIN, inner=SHA_INNER)),
     "ASHA" => () -> Hyperoptimizer(SH_OBJ, CANDIDATES, ASHA(R=R_MAX, η=ETA, r_min=R_MIN, inner=SHA_INNER)),
+    "DEHB" => () -> Hyperoptimizer(SH_OBJ, CANDIDATES, DEHB(R=R_MAX, η=ETA, r_min=R_MIN)),
 )
 
 _log("Warming up (JIT compilation)...")
@@ -53,7 +54,7 @@ const WARMUP_SH_OBJ = Stateful(_warmup_objective_stateful)
 for executor in EXECUTORS, sampler in (RandomSampler(), LHSampler())
     run!(Hyperoptimizer(WARMUP_OBJ, CANDIDATES; sampler=sampler, n=2); executor=executor, show_progress=false)
 end
-for sh_sampler in (Hyperband(R=1, η=3, r_min=1), ASHA(R=1, η=3, r_min=1))
+for sh_sampler in (Hyperband(R=1, η=3, r_min=1), ASHA(R=1, η=3, r_min=1), DEHB(R=3, η=3, r_min=1))
     run!(Hyperoptimizer(WARMUP_SH_OBJ, CANDIDATES, sh_sampler); executor=Serial(), show_progress=false)
 end
 
