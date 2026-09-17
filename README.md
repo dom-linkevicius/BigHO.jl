@@ -18,7 +18,7 @@ The package currently implements the following samplers:
 - `LHSampler`, which is a Latin Hypercube sampler, aiming to maximally spread out `n` samples in the parameter space
 - `Hyperband`, which runs brackets of trials, using a different number of resources to train them and promoting best trials within a bracket, until the bracket reaches its resource limit
 - `ASHA`, which is the asynchronous version of Hyperband, also running brackets, but not requiring the completion of a bracket before trials are promoted
-- `DEHB`, a modified version of `Hyperband` where, after the first bracket, trials are not simply promoted between rungs but undergo  differential evolution and can reach a better ceiling on larger search spaces
+- `DEHB`, a modified version of `Hyperband` where, after the first bracket, trials are not simply promoted between rungs but undergo differential evolution and can reach a better ceiling on larger search spaces
 
 ## Convenience functionality
 
@@ -44,14 +44,27 @@ using Random
 function noisy_bowl(p; pre_artefact=nothing)
     p.x > 4.5 && error("simulated failure for x > 4.5 -- BigHO marks this a Failed trial and keeps going")
     n_done, total = pre_artefact === nothing ? (0, 0.0) : pre_artefact
+    centre = p.kernel == "rbf" ? 3.0 : -1.0
+    loss = (p.x - centre)^2 + (log10(p.lr) + 2.5)^2 + (p.degree - 3)^2
     n_new = p.r - n_done
-    total += sum((p.x - 3)^2 + (p.y + 1)^2 + 0.5randn() for _ in 1:n_new)
+    total += sum(loss + 0.5randn() for _ in 1:n_new)
     n_done += n_new
     return total / n_done, (n_done, total)
 end
 
-candidates = (x=Continuous(-5.0, 5.0), y=Continuous(-5.0, 5.0))
-ho = Hyperoptimizer(Stateful(noisy_bowl), candidates, Hyperband(R=27))
+# Named, not a closure: checkpoints store functions by name, so an anonymous `u -> 10.0^u`
+# would not survive a reload.
+log_uniform(u) = 10.0^u
+
+candidates = (
+    x=Continuous(-5.0, 5.0),                       # uniform over [-5, 5]
+    lr=Continuous(-4, -1; transform=log_uniform),  # log-uniform over [1e-4, 1e-1]
+    degree=Ordinal([1, 2, 3, 4, 5]),               # ordered, so 2 lies between 1 and 3
+    kernel=Nominal(["rbf", "linear"]),             # unordered, no level is "between" any other
+)
+
+# iterations=2 replays the whole bracket schedule twice: 4 brackets, 138 trials in total.
+ho = Hyperoptimizer(Stateful(noisy_bowl), candidates, Hyperband(R=27, iterations=2))
 
 # save_path/save_every checkpoint the run every 10 trials told -- after a crash, resume with
 # `ho = load_hyperoptimizer(Stateful(noisy_bowl), "ho_checkpoint.jld2")`, then `run!` again.
