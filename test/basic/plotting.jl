@@ -21,3 +21,21 @@
         histogram_kwargs=(; color=:orange),
         line_kwargs=(; color=:green)) isa CairoMakie.Figure
 end
+
+@testset "summaryplot with categorical hyperparameters" begin
+    @info "Testing summaryplot(ho) when a hyperparameter's values are not numbers"
+
+    ho = Hyperoptimizer(p -> (p.a - 3)^2 + (p.kernel == "rbf" ? 0.0 : 1.0),
+                         (a=Continuous(0, 10), kernel=Nominal(["rbf", "linear"]), shape=Nominal([:wide, :narrow]));
+                         n=20)
+    run!(ho; show_progress=false)
+
+    @test eltype(DataFrame(ho).kernel) <: AbstractString
+    @test summaryplot(ho) isa CairoMakie.Figure
+    @test summaryplot(ho; histogram_kwargs=(; color=:orange)) isa CairoMakie.Figure
+
+    ho_only_categorical = Hyperoptimizer(p -> p.kernel == "rbf" ? 0.0 : 1.0,
+                                          (kernel=Nominal(["rbf", "linear"]),); n=6)
+    run!(ho_only_categorical; show_progress=false)
+    @test summaryplot(ho_only_categorical) isa CairoMakie.Figure
+end
