@@ -38,7 +38,7 @@ include("samplers/sha_based/dehb_sync.jl")
 """
     FixedPlanSampler
 """
-const FixedPlanSampler = Union{LHSampler,Hyperband,ASHA}
+const FixedPlanSampler = Union{LHSampler,SuccessiveHalving}
 
 include("executors/executor.jl")
 include("executors/serial.jl")
