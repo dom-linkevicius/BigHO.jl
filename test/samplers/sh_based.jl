@@ -337,8 +337,15 @@ end
     hb = Hyperoptimizer(toy, (a=Continuous(0, 1),), Hyperband(R=27, η=3, r_min=1, iterations=2))
     text = sprint(show, hb)
     @test occursin("resource levels: 1, 3, 9, 27", text)
+    @test occursin("trials per level: 54, 42, 26, 16", text)
     @test occursin("total trials: 138", text)
     @test occursin("total trials: $(hb.n)", text)
+
+    for sampler in (Hyperband(R=27, η=3, r_min=1, iterations=2), ASHA(R=9, η=3, r_min=1),
+                    Hyperband(R=81, η=3, r_min=3), DEHB(R=729, η=3, r_min=9))
+        @test sum(BigHO._trials_per_level(sampler)) == BigHO._total_trials(sampler)
+        @test length(BigHO._trials_per_level(sampler)) == BigHO._smax(sampler.R, sampler.r_min, sampler.η) + 1
+    end
 
     @test occursin("resource levels: 1, 3, 9", sprint(show, Hyperoptimizer(toy, (a=Continuous(0, 1),), ASHA(R=9, η=3, r_min=1))))
     @test occursin("resource levels: 3, 9, 27, 81", sprint(show, Hyperoptimizer(toy, (a=Continuous(0, 1),), Hyperband(R=81, η=3, r_min=3))))
@@ -346,5 +353,6 @@ end
 
     plain = sprint(show, Hyperoptimizer(p -> p.a, (a=Continuous(0, 1),); n=5))
     @test !occursin("resource levels", plain)
+    @test !occursin("trials per level", plain)
     @test !occursin("total trials", plain)
 end
