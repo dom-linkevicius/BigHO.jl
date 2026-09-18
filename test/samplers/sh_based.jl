@@ -328,3 +328,23 @@ end
         @test count(l -> l.level == Logging.Warn && occursin("completed with at least one failed trial", l.message), logs3) > 0
     end
 end
+
+@testset "SuccessiveHalving show reports its schedule" begin
+    @info "Testing that displaying a SuccessiveHalving Hyperoptimizer lists resource levels and total trials"
+
+    toy = Stateful((p; pre_artefact=nothing) -> (p.a, nothing))
+
+    hb = Hyperoptimizer(toy, (a=Continuous(0, 1),), Hyperband(R=27, η=3, r_min=1, iterations=2))
+    text = sprint(show, hb)
+    @test occursin("resource levels: 1, 3, 9, 27", text)
+    @test occursin("total trials: 138", text)
+    @test occursin("total trials: $(hb.n)", text)
+
+    @test occursin("resource levels: 1, 3, 9", sprint(show, Hyperoptimizer(toy, (a=Continuous(0, 1),), ASHA(R=9, η=3, r_min=1))))
+    @test occursin("resource levels: 3, 9, 27, 81", sprint(show, Hyperoptimizer(toy, (a=Continuous(0, 1),), Hyperband(R=81, η=3, r_min=3))))
+    @test occursin("resource levels: 1, 3, 9", sprint(show, Hyperoptimizer(p -> p.a, (a=Continuous(0, 1),), DEHB(R=9, η=3, r_min=1))))
+
+    plain = sprint(show, Hyperoptimizer(p -> p.a, (a=Continuous(0, 1),); n=5))
+    @test !occursin("resource levels", plain)
+    @test !occursin("total trials", plain)
+end

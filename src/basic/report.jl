@@ -29,6 +29,13 @@ end
 _domain_summary(d::Continuous) = "[$(d.min), $(d.max)]" * (d.transform === identity ? "" : " via $(d.transform)")
 _domain_summary(d::Union{Nominal,Ordinal}) = length(d) <= 5 ? string(d.values) : "length: $(length(d))"
 
+_show_schedule(io::IO, ::Sampler) = nothing
+function _show_schedule(io::IO, s::SuccessiveHalving)
+    levels = [_resource(s.R, s.r_min, s.η, 1, rung) for rung in 1:_n_rungs(s.R, s.r_min, s.η, 1)]
+    println(io, "  resource levels: " * join(levels, ", "))
+    println(io, "  total trials: $(_total_trials(s))")
+end
+
 function Base.show(io::IO, ho::Hyperoptimizer)
     println(io, "Hyperoptimizer with")
     candstrings = map(1:length(ho.candidates)) do i
@@ -36,6 +43,7 @@ function Base.show(io::IO, ho::Hyperoptimizer)
         "  " * string(k) * " " * _domain_summary(c)
     end
     println(io, join(candstrings, "\n"))
+    _show_schedule(io, ho.sampler)
     _show_optimum(io, ho, ho.best_min_id)
 end
 
