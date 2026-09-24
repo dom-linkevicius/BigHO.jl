@@ -20,6 +20,11 @@
         scatter_kwargs=(; color=:red),
         histogram_kwargs=(; color=:orange),
         line_kwargs=(; color=:green)) isa CairoMakie.Figure
+
+    _axes(f) = filter(x -> x isa CairoMakie.Axis, f.content)
+    @test all(ax -> ax.xticklabelsize[] == 9 && ax.yticklabelsize[] == 9, _axes(summaryplot(ho)))
+    overridden = summaryplot(ho; axis_kwargs=(; xticklabelsize=21, yticklabelsize=22))
+    @test all(ax -> ax.xticklabelsize[] == 21 && ax.yticklabelsize[] == 22, _axes(overridden))
 end
 
 @testset "summaryplot with categorical hyperparameters" begin
@@ -38,4 +43,22 @@ end
                                           (kernel=Nominal(["rbf", "linear"]),); n=6)
     run!(ho_only_categorical; show_progress=false)
     @test summaryplot(ho_only_categorical) isa CairoMakie.Figure
+end
+
+@testset "summaryplot with function-valued hyperparameters" begin
+    @info "Testing summaryplot(ho) when a hyperparameter's values are functions, which define no ordering"
+
+    relu(x) = max(x, 0.0)
+    ho = Hyperoptimizer(p -> p.act(p.a), (a=Continuous(-2, 2), act=Nominal(Function[tanh, relu, abs])); n=24)
+    run!(ho; show_progress=false)
+
+    @test eltype(DataFrame(ho).act) <: Function
+    @test_throws MethodError sort(unique(DataFrame(ho).act))
+    @test summaryplot(ho) isa CairoMakie.Figure
+
+    ho_mixed = Hyperoptimizer(p -> p.act(p.a),
+                              (a=Continuous(-2, 2), act=Nominal(Function[tanh, abs]),
+                               tag=Nominal([:fast, :slow]), name=Nominal(["a", "b"])); n=24)
+    run!(ho_mixed; show_progress=false)
+    @test summaryplot(ho_mixed) isa CairoMakie.Figure
 end
