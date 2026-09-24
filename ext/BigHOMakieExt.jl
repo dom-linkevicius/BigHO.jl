@@ -7,17 +7,26 @@ using AlgebraOfGraphics: data, mapping, visual, draw!
 
 _is_categorical(column) = !(eltype(column) <: Real)
 _marginal(column) = _is_categorical(column) ? AlgebraOfGraphics.frequency() : AlgebraOfGraphics.histogram()
-_levels(column) = sort(unique(column))
-_category_ticks(column) =
-    _is_categorical(column) ? (; xticks=(1:length(_levels(column)), string.(_levels(column)))) : NamedTuple()
+
+# Categorical levels are plotted by their `string`, so values that define no `isless`
+# (functions, say) still sort into the positions AlgebraOfGraphics assigns them.
+function _panel(completed, p)
+    _is_categorical(completed[!, p]) || return completed, NamedTuple()
+    labels = string.(completed[!, p])
+    frame = copy(completed)
+    frame[!, p] = labels
+    levels = sort(unique(labels))
+    return frame, (; xticks=(1:length(levels), levels))
+end
 
 function _draw_marginal_scatter!(fig, row, col, completed, p; axis_kwargs, scatter_kwargs, histogram_kwargs)
+    frame, ticks = _panel(completed, p)
     gl = fig[row, col] = GridLayout()
     ax_top = Axis(gl[1, 1]; axis_kwargs...)
-    ax_main = Axis(gl[2, 1]; xlabel=string(p), ylabel="value", _category_ticks(completed[!, p])..., axis_kwargs...)
+    ax_main = Axis(gl[2, 1]; xlabel=string(p), ylabel="value", ticks..., axis_kwargs...)
     ax_right = Axis(gl[2, 2]; axis_kwargs...)
-    draw!(ax_top, data(completed) * mapping(p) * _marginal(completed[!, p]) * visual(BarPlot; histogram_kwargs...))
-    draw!(ax_main, data(completed) * mapping(p, :value) * visual(Scatter; scatter_kwargs...))
+    draw!(ax_top, data(frame) * mapping(p) * _marginal(frame[!, p]) * visual(BarPlot; histogram_kwargs...))
+    draw!(ax_main, data(frame) * mapping(p, :value) * visual(Scatter; scatter_kwargs...))
     draw!(ax_right, data(completed) * mapping(:value) * AlgebraOfGraphics.histogram() * visual(BarPlot; direction=:x, histogram_kwargs...))
     linkxaxes!(ax_top, ax_main)
     linkyaxes!(ax_right, ax_main)
