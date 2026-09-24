@@ -20,6 +20,11 @@
         scatter_kwargs=(; color=:red),
         histogram_kwargs=(; color=:orange),
         line_kwargs=(; color=:green)) isa CairoMakie.Figure
+
+    _axes(f) = filter(x -> x isa CairoMakie.Axis, f.content)
+    @test all(ax -> ax.xticklabelsize[] == 9 && ax.yticklabelsize[] == 9, _axes(summaryplot(ho)))
+    overridden = summaryplot(ho; axis_kwargs=(; xticklabelsize=21, yticklabelsize=22))
+    @test all(ax -> ax.xticklabelsize[] == 21 && ax.yticklabelsize[] == 22, _axes(overridden))
 end
 
 @testset "summaryplot with categorical hyperparameters" begin

@@ -5,6 +5,10 @@ using CairoMakie
 import AlgebraOfGraphics
 using AlgebraOfGraphics: data, mapping, visual, draw!
 
+# Panels are small and numerous, so tick labels start below the Makie default; anything
+# passed in axis_kwargs still wins, since it is splatted last.
+const _TICKLABEL_DEFAULTS = (; xticklabelsize=9, yticklabelsize=9)
+
 _is_categorical(column) = !(eltype(column) <: Real)
 _marginal(column) = _is_categorical(column) ? AlgebraOfGraphics.frequency() : AlgebraOfGraphics.histogram()
 
@@ -22,9 +26,9 @@ end
 function _draw_marginal_scatter!(fig, row, col, completed, p; axis_kwargs, scatter_kwargs, histogram_kwargs)
     frame, ticks = _panel(completed, p)
     gl = fig[row, col] = GridLayout()
-    ax_top = Axis(gl[1, 1]; axis_kwargs...)
-    ax_main = Axis(gl[2, 1]; xlabel=string(p), ylabel="value", ticks..., axis_kwargs...)
-    ax_right = Axis(gl[2, 2]; axis_kwargs...)
+    ax_top = Axis(gl[1, 1]; _TICKLABEL_DEFAULTS..., axis_kwargs...)
+    ax_main = Axis(gl[2, 1]; xlabel=string(p), ylabel="value", ticks..., _TICKLABEL_DEFAULTS..., axis_kwargs...)
+    ax_right = Axis(gl[2, 2]; _TICKLABEL_DEFAULTS..., axis_kwargs...)
     draw!(ax_top, data(frame) * mapping(p) * _marginal(frame[!, p]) * visual(BarPlot; histogram_kwargs...))
     draw!(ax_main, data(frame) * mapping(p, :value) * visual(Scatter; scatter_kwargs...))
     draw!(ax_right, data(completed) * mapping(:value) * AlgebraOfGraphics.histogram() * visual(BarPlot; direction=:x, histogram_kwargs...))
@@ -38,13 +42,13 @@ function _draw_marginal_scatter!(fig, row, col, completed, p; axis_kwargs, scatt
 end
 
 function _draw_value_over_id!(fig, row, col, completed; axis_kwargs, scatter_kwargs)
-    ax = Axis(fig[row, col]; xlabel="id", ylabel="value", title="objective value over id", axis_kwargs...)
+    ax = Axis(fig[row, col]; xlabel="id", ylabel="value", title="objective value over id", _TICKLABEL_DEFAULTS..., axis_kwargs...)
     draw!(ax, data(completed) * mapping(:id, :value) * visual(Scatter; scatter_kwargs...))
     return nothing
 end
 
 function _draw_running_min!(fig, row, col, completed; axis_kwargs, line_kwargs)
-    ax = Axis(fig[row, col]; xlabel="id", ylabel="best value so far", title="minimum over runs so far", axis_kwargs...)
+    ax = Axis(fig[row, col]; xlabel="id", ylabel="best value so far", title="minimum over runs so far", _TICKLABEL_DEFAULTS..., axis_kwargs...)
     lines!(ax, completed.id, accumulate(min, completed.value); line_kwargs...)
     return nothing
 end
