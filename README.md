@@ -45,7 +45,7 @@ function noisy_bowl(p; pre_artefact=nothing)
     p.x > 4.5 && error("simulated failure for x > 4.5 -- BigHO marks this a Failed trial and keeps going")
     n_done, total = pre_artefact === nothing ? (0, 0.0) : pre_artefact
     centre = p.kernel == "rbf" ? 3.0 : -1.0
-    loss = (p.x - centre)^2 + (log10(p.lr) + 2.5)^2 + (p.degree - 3)^2
+    loss = p.act(p.x - centre)^2 + (log10(p.lr) + 2.5)^2 + (p.degree - 3)^2
     n_new = p.r - n_done
     total += sum(loss + 0.5randn() for _ in 1:n_new)
     n_done += n_new
@@ -59,6 +59,7 @@ candidates = (
     lr=Continuous(-4, -1; transform=exp10),   # log-uniform over [1e-4, 1e-1]
     degree=Ordinal([1, 2, 3, 4, 5]),          # ordered, so 2 lies between 1 and 3
     kernel=Nominal(["rbf", "linear"]),        # unordered, no level is "between" any other
+    act=Nominal(Function[tanh, abs]),         # values can be functions; plots label them by name
 )
 
 # iterations=2 replays the whole bracket schedule twice: 4 brackets, 138 trials in total.
