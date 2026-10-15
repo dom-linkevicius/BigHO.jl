@@ -24,7 +24,7 @@ end
         run!(ho; show_progress=false)
         @test ho.n == length(ho.runs)
         @test length(ho.completed) == ho.n
-        @test ho.status == BigHO.Finished
+        @test ho.status == BigHOPs.Finished
 
         @test :r ∉ ho.params
         @test length(ho.candidates) == 2
@@ -59,12 +59,12 @@ end
 
         n_promoted = 0
         for e in ho.runs
-            e.status == BigHO.Completed || continue
+            e.status == BigHOPs.Completed || continue
             if e.pre_artefact !== nothing
                 n_promoted += 1
                 pre_call_id, _ = e.pre_artefact
                 @test pre_call_id !== nothing
-                producer = findfirst(x -> x.status == BigHO.Completed && x.post_artefact[1] == pre_call_id, ho.runs)
+                producer = findfirst(x -> x.status == BigHOPs.Completed && x.post_artefact[1] == pre_call_id, ho.runs)
                 @test producer !== nothing
                 @test producer < e.id
 
@@ -104,7 +104,7 @@ end
         n_calls[] = 0
         ho = Hyperoptimizer(hb_flaky, (a=Nominal([1, 2, 3, 4, 5]),), sampler)
         @test_logs (:warn, r"NaN") match_mode = :any run!(ho; show_progress=false)
-        n_failed = count(e -> e.status == BigHO.Failed, ho.runs)
+        n_failed = count(e -> e.status == BigHOPs.Failed, ho.runs)
         @test n_failed > 0
         @test length(ho.completed) == length(ho.runs) - n_failed
     end
@@ -114,10 +114,10 @@ end
     @info "Testing Hyperband/ASHA are FixedPlanSamplers (fixed one-pass plan, no settarget!/resume)"
 
     for sampler in (Hyperband(R=9, η=3, r_min=1), ASHA(R=9, η=3, r_min=1))
-        @test sampler isa BigHO.FixedPlanSampler
+        @test sampler isa BigHOPs.FixedPlanSampler
         ho = Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),), sampler)
         run!(ho; show_progress=false)
-        @test ho.status == BigHO.Finished
+        @test ho.status == BigHOPs.Finished
         @test_throws ArgumentError settarget!(ho, ho.n + 10)
     end
 end
@@ -129,14 +129,14 @@ end
     @test_throws ArgumentError ASHA(R=9, η=3, r_min=1, iterations=-1)
 
     toy(p; pre_artefact=nothing) = ((p.a - 3.0)^2 + 1.0 / p.r, nothing)
-    one_pass = BigHO._total_trials(9, 1, 3)
+    one_pass = BigHOPs._total_trials(9, 1, 3)
 
     for sampler in (Hyperband(R=9, η=3, r_min=1, iterations=3), ASHA(R=9, η=3, r_min=1, iterations=3))
         ho = Hyperoptimizer(Stateful(toy), (a=Continuous(0, 10),), sampler)
         run!(ho; show_progress=false)
         @test ho.n == 3 * one_pass
         @test length(ho.runs) == ho.n
-        @test ho.status == BigHO.Finished
+        @test ho.status == BigHOPs.Finished
 
         shapes = [sort([(e.metadata[:bracket], e.metadata[:rung])
                         for e in ho.runs if e.metadata[:iteration] == t]) for t in 1:3]
@@ -162,7 +162,7 @@ end
         @test length(ho.runs) == ho.n
         @test length(ho.completed) == ho.n
         @test ho.n_pending == 0
-        @test ho.status == BigHO.Finished
+        @test ho.status == BigHOPs.Finished
         @test sort([e.id for e in ho.runs]) == collect(1:ho.n)
     end
 end
@@ -170,13 +170,13 @@ end
 @testset "Hyperband/ASHA under DistributedQueue executor" begin
     @info "Testing Hyperband/ASHA under the DistributedQueue executor (cross-bracket promotion correctness under real concurrency)"
 
-    @everywhere using BigHO
+    @everywhere using BigHOPs
     @everywhere sh_dq_toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
 
     sh_dq_spawn_worker() = first(addprocs(1))
     function sh_dq_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
-            using BigHO
+            using BigHOPs
             sh_dq_toy(p) = (p.a - 3.0)^2 + (p.b - 1.0)^2 + 1.0 / p.r
         end))
         return nothing
@@ -189,7 +189,7 @@ end
             @test length(ho.runs) == ho.n
             @test length(ho.completed) == ho.n
             @test ho.n_pending == 0
-            @test ho.status == BigHO.Finished
+            @test ho.status == BigHOPs.Finished
             @test sort([e.id for e in ho.runs]) == collect(1:ho.n)
         end
     finally
@@ -201,15 +201,15 @@ end
     @info "Testing Hyperband's promote-fewer-than-planned and abandon-on-total-wipeout logic"
 
     s = Hyperband(R=9, η=3, r_min=1)
-    b = BigHO._open_next!(s)
+    b = BigHOPs._open_next!(s)
 
     function rung1_entries(bracket, n_total, n_failed)
-        runs = BigHO.RunEntry[]
+        runs = BigHOPs.RunEntry[]
         for idx in 1:n_total
-            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total],
+            e = BigHOPs.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total],
                                Dict{Symbol,Any}(:rung => 1, :iteration => 1, :bracket => 1))
-            e = idx <= n_failed ? BigHO._with_result(e, BigHO.Failed, missing, nothing; error=NaN) :
-                                   BigHO._with_result(e, BigHO.Completed, Float64(idx), nothing)
+            e = idx <= n_failed ? BigHOPs._with_result(e, BigHOPs.Failed, missing, nothing; error=NaN) :
+                                   BigHOPs._with_result(e, BigHOPs.Completed, Float64(idx), nothing)
             push!(runs, e)
             push!(bracket.rungs[1].ids, idx)
         end
@@ -218,30 +218,30 @@ end
 
     runs = rung1_entries(b, 9, 7)
     logs, _ = Test.collect_test_logs() do
-        BigHO.on_tell!(s, runs, runs[end])
+        BigHOPs.on_tell!(s, runs, runs[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("promoting fewer than planned", l.message), logs) == 1
-    d = BigHO._bracket_decision(s, b, runs)
-    @test d isa BigHO.SHDecision{:promote} && d.rung.rung == 1 && d.promoted_from == 8
+    d = BigHOPs._bracket_decision(s, b, runs)
+    @test d isa BigHOPs.SHDecision{:promote} && d.rung.rung == 1 && d.promoted_from == 8
 
-    push!(runs, BigHO.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :iteration => 1, :bracket => 1)))
+    push!(runs, BigHOPs.RunEntry(10, (r=3, a=8), [7.5 / 9], Dict{Symbol,Any}(:rung => 2, :iteration => 1, :bracket => 1)))
     push!(b.rungs[2].ids, 10)
-    d = BigHO._bracket_decision(s, b, runs)
-    @test d isa BigHO.SHDecision{:promote} && d.promoted_from == 9
-    push!(runs, BigHO.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :iteration => 1, :bracket => 1)))
+    d = BigHOPs._bracket_decision(s, b, runs)
+    @test d isa BigHOPs.SHDecision{:promote} && d.promoted_from == 9
+    push!(runs, BigHOPs.RunEntry(11, (r=3, a=9), [8.5 / 9], Dict{Symbol,Any}(:rung => 2, :iteration => 1, :bracket => 1)))
     push!(b.rungs[2].ids, 11)
-    @test BigHO._bracket_decision(s, b, runs) isa BigHO.SHDecision{:wait}
+    @test BigHOPs._bracket_decision(s, b, runs) isa BigHOPs.SHDecision{:wait}
 
     s2 = Hyperband(R=9, η=3, r_min=1)
-    b2 = BigHO._open_next!(s2)
+    b2 = BigHOPs._open_next!(s2)
     wiped = rung1_entries(b2, 9, 9)
     logs2, _ = Test.collect_test_logs() do
-        BigHO.on_tell!(s2, wiped, wiped[end])
+        BigHOPs.on_tell!(s2, wiped, wiped[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("abandoning it", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:exhausted}
-    moved = BigHO._manage_decide!(s2, wiped)
-    @test moved isa BigHO.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
+    @test BigHOPs._bracket_decision(s2, b2, wiped) isa BigHOPs.SHDecision{:exhausted}
+    moved = BigHOPs._manage_decide!(s2, wiped)
+    @test moved isa BigHOPs.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
 
     flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
     outcomes = map((Serial(), Threaded(4))) do executor
@@ -249,8 +249,8 @@ end
         logs3, _ = Test.collect_test_logs() do
             run!(ho; executor=executor, show_progress=false)
         end
-        @test ho.status == BigHO.Finished
-        n_failed = count(e -> e.status == BigHO.Failed, ho.runs)
+        @test ho.status == BigHOPs.Finished
+        n_failed = count(e -> e.status == BigHOPs.Failed, ho.runs)
         @test n_failed > 0
         @test length(ho.runs) < ho.n
         @test length(ho.completed) == length(ho.runs) - n_failed
@@ -271,7 +271,7 @@ end
         run!(ho; show_progress=false)
         @test ho.n == length(ho.runs)
         @test length(ho.completed) == ho.n
-        @test ho.status == BigHO.Finished
+        @test ho.status == BigHOPs.Finished
     end
 end
 
@@ -279,15 +279,15 @@ end
     @info "Testing ASHA's on_tell! bracket-stalled and rung-completed-with-failure warnings"
 
     s = ASHA(R=9, η=3, r_min=1)
-    b = BigHO._open_next!(s)
+    b = BigHOPs._open_next!(s)
 
     function rung1_entries(bracket, n_total, n_failed)
-        runs = BigHO.RunEntry[]
+        runs = BigHOPs.RunEntry[]
         for idx in 1:n_total
-            e = BigHO.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total],
+            e = BigHOPs.RunEntry(idx, (r=1, a=idx), [(idx - 0.5) / n_total],
                                Dict{Symbol,Any}(:rung => 1, :iteration => 1, :bracket => 1))
-            e = idx <= n_failed ? BigHO._with_result(e, BigHO.Failed, missing, nothing; error=NaN) :
-                                   BigHO._with_result(e, BigHO.Completed, Float64(idx), nothing)
+            e = idx <= n_failed ? BigHOPs._with_result(e, BigHOPs.Failed, missing, nothing; error=NaN) :
+                                   BigHOPs._with_result(e, BigHOPs.Completed, Float64(idx), nothing)
             push!(runs, e)
             push!(bracket.rungs[1].ids, idx)
         end
@@ -296,22 +296,22 @@ end
 
     partial = rung1_entries(b, 9, 1)
     logs1, _ = Test.collect_test_logs() do
-        BigHO.on_tell!(s, partial, partial[end])
+        BigHOPs.on_tell!(s, partial, partial[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("completed with at least one failed trial", l.message), logs1) == 1
     @test count(l -> l.level == Logging.Warn && occursin("stalled", l.message), logs1) == 0
 
     s2 = ASHA(R=9, η=3, r_min=1)
-    b2 = BigHO._open_next!(s2)
+    b2 = BigHOPs._open_next!(s2)
     wiped = rung1_entries(b2, 9, 9)
     logs2, _ = Test.collect_test_logs() do
-        BigHO.on_tell!(s2, wiped, wiped[end])
+        BigHOPs.on_tell!(s2, wiped, wiped[end])
     end
     @test count(l -> l.level == Logging.Warn && occursin("bracket 1 of iteration 1 stalled at 9/13", l.message), logs2) == 1
     @test count(l -> l.level == Logging.Warn && occursin("rung 1 of bracket 1 of iteration 1 completed with at least one failed trial", l.message), logs2) == 1
-    @test BigHO._bracket_decision(s2, b2, wiped) isa BigHO.SHDecision{:exhausted}
-    moved = BigHO._manage_decide!(s2, wiped)
-    @test moved isa BigHO.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
+    @test BigHOPs._bracket_decision(s2, b2, wiped) isa BigHOPs.SHDecision{:exhausted}
+    moved = BigHOPs._manage_decide!(s2, wiped)
+    @test moved isa BigHOPs.SHDecision{:draw} && moved.bracket.bracket == 2 && moved.rung.rung == 1
 
     flaky(p) = p.a > 4 ? NaN : Float64(p.a) + 1.0 / p.r
     for (label, executor) in (("Serial", Serial()), ("Threaded", Threaded(4)))
@@ -319,8 +319,8 @@ end
         logs3, _ = Test.collect_test_logs() do
             run!(ho; executor=executor, show_progress=false)
         end
-        @test ho.status == BigHO.Finished
-        n_failed = count(e -> e.status == BigHO.Failed, ho.runs)
+        @test ho.status == BigHOPs.Finished
+        n_failed = count(e -> e.status == BigHOPs.Failed, ho.runs)
         @test n_failed > 0
         @test length(ho.runs) < ho.n
         @test length(ho.completed) == length(ho.runs) - n_failed
@@ -343,8 +343,8 @@ end
 
     for sampler in (Hyperband(R=27, η=3, r_min=1, iterations=2), ASHA(R=9, η=3, r_min=1),
                     Hyperband(R=81, η=3, r_min=3), DEHB(R=729, η=3, r_min=9))
-        @test sum(BigHO._trials_per_level(sampler)) == BigHO._total_trials(sampler)
-        @test length(BigHO._trials_per_level(sampler)) == BigHO._smax(sampler.R, sampler.r_min, sampler.η) + 1
+        @test sum(BigHOPs._trials_per_level(sampler)) == BigHOPs._total_trials(sampler)
+        @test length(BigHOPs._trials_per_level(sampler)) == BigHOPs._smax(sampler.R, sampler.r_min, sampler.η) + 1
     end
 
     @test occursin("resource levels: 1, 3, 9", sprint(show, Hyperoptimizer(toy, (a=Continuous(0, 1),), ASHA(R=9, η=3, r_min=1))))

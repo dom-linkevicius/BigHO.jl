@@ -1,4 +1,4 @@
-using BigHO
+using BigHOPs
 using CairoMakie
 using Distributions: Binomial
 using StableRNGs: StableRNG
@@ -36,9 +36,9 @@ function noisy_f(p, b::Int)
 end
 
 function _iteration_budget()
-    smax = BigHO._smax(R_MAX, R_MIN, ETA)
-    return sum(BigHO._capacity(R_MAX, R_MIN, ETA, bracket, rung) * BigHO._resource(R_MAX, R_MIN, ETA, bracket, rung)
-               for bracket in 1:(smax+1) for rung in 1:BigHO._n_rungs(R_MAX, R_MIN, ETA, bracket))
+    smax = BigHOPs._smax(R_MAX, R_MIN, ETA)
+    return sum(BigHOPs._capacity(R_MAX, R_MIN, ETA, bracket, rung) * BigHOPs._resource(R_MAX, R_MIN, ETA, bracket, rung)
+               for bracket in 1:(smax+1) for rung in 1:BigHOPs._n_rungs(R_MAX, R_MIN, ETA, bracket))
 end
 const ITERATION_BUDGET = _iteration_budget()
 _iterations(target) = max(1, ceil(Int, target / (ITERATION_BUDGET / R_MAX)))

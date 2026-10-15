@@ -1,14 +1,14 @@
 @testset "Executor equivalence" begin
     @info "Testing executor equivalence"
 
-    @everywhere using BigHO
+    @everywhere using BigHOPs
     @everywhere dq_eq(p) = (p.a - 7)^2 + (p.b - 3)^2
     @everywhere dq_eq_h(p) = p.a == 5 ? error("boom") : p.a
 
     test_spawn_worker() = first(addprocs(1))
     function test_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
-            using BigHO
+            using BigHOPs
             dq_eq(p) = (p.a - 7)^2 + (p.b - 3)^2
             dq_eq_h(p) = p.a == 5 ? error("boom") : p.a
         end))
@@ -45,7 +45,7 @@
 
         outcome_by_params(ho) = Dict(e.params => e.status for e in ho.runs)
         @test outcome_by_params(ho_s_mixed) == outcome_by_params(ho_t_mixed) == outcome_by_params(ho_d_mixed)
-        @test BigHO.Failed in values(outcome_by_params(ho_s_mixed))
+        @test BigHOPs.Failed in values(outcome_by_params(ho_s_mixed))
     finally
         rmprocs(filter(!=(1), workers()))
     end

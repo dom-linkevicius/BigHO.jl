@@ -1,6 +1,6 @@
 using Test, Random, Logging, Distributed
 using StableRNGs: StableRNG
-using BigHO
+using BigHOPs
 using DataFrames
 using CairoMakie
 using AlgebraOfGraphics

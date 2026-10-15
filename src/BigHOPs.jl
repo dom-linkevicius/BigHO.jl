@@ -1,4 +1,4 @@
-module BigHO
+module BigHOPs
 
 export Hyperoptimizer, run!, settarget!
 export Stateful

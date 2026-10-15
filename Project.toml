@@ -1,4 +1,4 @@
-name = "BigHO"
+name = "BigHOPs"
 uuid = "bd33d1ee-3653-4952-9991-ee0e1cdcfc3b"
 version = "0.1.0"
 authors = ["Domas Linkevicius"]
@@ -19,7 +19,7 @@ AlgebraOfGraphics = "cbdf2221-f076-402e-a563-3d30da359d67"
 CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
 
 [extensions]
-BigHOMakieExt = ["CairoMakie", "AlgebraOfGraphics"]
+BigHOPsMakieExt = ["CairoMakie", "AlgebraOfGraphics"]
 
 [compat]
 AlgebraOfGraphics = "0.10"

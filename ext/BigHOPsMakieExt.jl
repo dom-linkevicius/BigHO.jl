@@ -1,6 +1,6 @@
-module BigHOMakieExt
+module BigHOPsMakieExt
 
-using BigHO
+using BigHOPs
 using CairoMakie
 import AlgebraOfGraphics
 using AlgebraOfGraphics: data, mapping, visual, draw!
@@ -53,11 +53,11 @@ function _draw_running_min!(fig, row, col, completed; axis_kwargs, line_kwargs)
     return nothing
 end
 
-function BigHO.summaryplot(ho::BigHO.Hyperoptimizer; figure_kwargs=NamedTuple(), axis_kwargs=NamedTuple(),
+function BigHOPs.summaryplot(ho::BigHOPs.Hyperoptimizer; figure_kwargs=NamedTuple(), axis_kwargs=NamedTuple(),
                             scatter_kwargs=NamedTuple(), histogram_kwargs=NamedTuple(), line_kwargs=NamedTuple())
     isempty(ho.completed) &&
         error("summaryplot: this Hyperoptimizer has no completed runs")
-    completed = sort(BigHO.DataFrames.DataFrame(ho)[ho.completed, :], :id)
+    completed = sort(BigHOPs.DataFrames.DataFrame(ho)[ho.completed, :], :id)
 
     panels = Any[(fig, row, col) -> _draw_marginal_scatter!(fig, row, col, completed, p; axis_kwargs, scatter_kwargs, histogram_kwargs) for p in ho.params]
     push!(panels, (fig, row, col) -> _draw_value_over_id!(fig, row, col, completed; axis_kwargs, scatter_kwargs))

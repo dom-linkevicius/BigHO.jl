@@ -16,7 +16,7 @@
     @test length(results(ho)) == 100
     @test all(h -> 1.0 <= h.a <= 5.0 && h.b isa Bool && h.c in (1, 10, 100, 1000), history(ho))
 
-    @test !BigHO.blocked(ho.sampler, ho)
+    @test !BigHOPs.blocked(ho.sampler, ho)
 
     @test all(dim -> strata_hit(ho, dim) == 1:100, 1:3)
 
@@ -60,11 +60,11 @@ end
     candidates = values((a=Nominal(["x", "y"]), b=Nominal(["p", "q"])))
     design = [0.125 0.125 0.625 0.375
               0.125 0.625 0.125 0.375]
-    @test_logs (:warn, r"doesn't cover every discrete-variable combination") BigHO._warn_missing_combinations(design, candidates)
+    @test_logs (:warn, r"doesn't cover every discrete-variable combination") BigHOPs._warn_missing_combinations(design, candidates)
 
     full_design = [0.125 0.375 0.625 0.875
                    0.125 0.625 0.375 0.875]
-    @test_logs min_level = Logging.Warn BigHO._warn_missing_combinations(full_design, candidates)
+    @test_logs min_level = Logging.Warn BigHOPs._warn_missing_combinations(full_design, candidates)
 end
 
 @testset "LHSampler optimization correctness" begin

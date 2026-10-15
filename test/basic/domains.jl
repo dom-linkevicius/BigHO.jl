@@ -6,9 +6,9 @@
     c = Continuous(1, 5)
 
     @testset "construction" begin
-        @test nom isa BigHO.Domain
-        @test ord isa BigHO.Domain
-        @test c isa BigHO.Domain
+        @test nom isa BigHOPs.Domain
+        @test ord isa BigHOPs.Domain
+        @test c isa BigHOPs.Domain
         @test nom.values == 1:4
         @test ord.values == 1:3
         @test (c.min, c.max) == (1.0, 5.0)
@@ -41,11 +41,11 @@
 
     @testset "transform" begin
         log_d = Continuous(-4, -1; transform=exp10)
-        @test BigHO.from_unit(log_d, 0.0) ≈ 1e-4
-        @test BigHO.from_unit(log_d, 1.0) ≈ 1e-1
-        @test BigHO.from_unit(log_d, 0.5) ≈ exp10(-2.5)
+        @test BigHOPs.from_unit(log_d, 0.0) ≈ 1e-4
+        @test BigHOPs.from_unit(log_d, 1.0) ≈ 1e-1
+        @test BigHOPs.from_unit(log_d, 0.5) ≈ exp10(-2.5)
 
-        @test Continuous(0, 2π; transform=sin) isa BigHO.Domain
+        @test Continuous(0, 2π; transform=sin) isa BigHOPs.Domain
 
         @test_throws ArgumentError Continuous(0, 1; transform=x -> 1 / x)
         @test_throws ArgumentError Continuous(0, Inf)
@@ -54,21 +54,21 @@
     @testset "from_unit" begin
         levels = Nominal([:a, :b, :c, :d])
 
-        @test BigHO.from_unit(levels, 0.0) === :a
-        @test BigHO.from_unit(levels, 1.0) === :d
-        @test [BigHO.from_unit(levels, (i - 0.5) / 4) for i in 1:4] == [:a, :b, :c, :d]
+        @test BigHOPs.from_unit(levels, 0.0) === :a
+        @test BigHOPs.from_unit(levels, 1.0) === :d
+        @test [BigHOPs.from_unit(levels, (i - 0.5) / 4) for i in 1:4] == [:a, :b, :c, :d]
 
-        @test BigHO.from_unit(levels, 0.25) === :a
-        @test BigHO.from_unit(levels, nextfloat(0.25)) === :b
+        @test BigHOPs.from_unit(levels, 0.25) === :a
+        @test BigHOPs.from_unit(levels, nextfloat(0.25)) === :b
 
-        @test BigHO.from_unit(c, 0.0) == 1.0
-        @test BigHO.from_unit(c, 1.0) == 5.0
-        @test BigHO.from_unit(c, 0.25) == 2.0
+        @test BigHOPs.from_unit(c, 0.0) == 1.0
+        @test BigHOPs.from_unit(c, 1.0) == 5.0
+        @test BigHOPs.from_unit(c, 0.25) == 2.0
 
-        @test BigHO.from_unit(levels, -1.0) === :a
-        @test BigHO.from_unit(levels, 2.0) === :d
-        @test BigHO.from_unit(c, -1.0) == 1.0
-        @test BigHO.from_unit(c, 3.0) == 5.0
+        @test BigHOPs.from_unit(levels, -1.0) === :a
+        @test BigHOPs.from_unit(levels, 2.0) === :d
+        @test BigHOPs.from_unit(c, -1.0) == 1.0
+        @test BigHOPs.from_unit(c, 3.0) == 5.0
     end
 
     @testset "length" begin

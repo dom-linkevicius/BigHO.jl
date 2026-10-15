@@ -1,4 +1,4 @@
-using BigHO
+using BigHOPs
 using JLD2
 
 include("nn_objective.jl")
@@ -17,14 +17,14 @@ const CANDIDATES = (
 
 const ETA = 3
 
-const N_TRIALS = DEPLOY ? BigHO._total_draws(R_MAX, R_MIN, ETA) : 4
+const N_TRIALS = DEPLOY ? BigHOPs._total_draws(R_MAX, R_MIN, ETA) : 4
 const REGRET_REPEATS = parse(Int, get(ENV, "BIGHO_BENCHMARK_REPEATS", DEPLOY ? "10" : "2"))
 
 if DEPLOY
-    smax = BigHO._smax(R_MAX, R_MIN, ETA)
+    smax = BigHOPs._smax(R_MAX, R_MIN, ETA)
     total_resource_units = sum(
-        BigHO._capacity(R_MAX, R_MIN, ETA, k, i) * (BigHO._resource(R_MAX, R_MIN, ETA, k, i) - (i > 1 ? BigHO._resource(R_MAX, R_MIN, ETA, k, i - 1) : 0))
-        for k in 1:(smax+1) for i in 1:BigHO._n_rungs(R_MAX, R_MIN, ETA, k)
+        BigHOPs._capacity(R_MAX, R_MIN, ETA, k, i) * (BigHOPs._resource(R_MAX, R_MIN, ETA, k, i) - (i > 1 ? BigHOPs._resource(R_MAX, R_MIN, ETA, k, i - 1) : 0))
+        for k in 1:(smax+1) for i in 1:BigHOPs._n_rungs(R_MAX, R_MIN, ETA, k)
     )
     hyperband_total_epochs = total_resource_units * EPOCHS_PER_RESOURCE
     RANDOM_FULL_EPOCHS[] = round(Int, hyperband_total_epochs / N_TRIALS)
