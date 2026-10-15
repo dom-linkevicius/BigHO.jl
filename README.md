@@ -6,6 +6,15 @@
 
 BigHO.jl is a hyperparameter optimization library meant to be used in situations where individual function evaluations are costly. The package implements executors (which control how individual functions are evaluated) and samplers (which control how the hyperparameters are chosen), allowing for different composition of executors and samplers, depending on the optimization problem and available resources. The package is still under development and some of the features or implementations may change.
 
+### Installation
+
+```julia
+using Pkg
+Pkg.add("BigHO")
+```
+
+Plotting lives in an extension, so `summaryplot` additionally needs `CairoMakie` and `AlgebraOfGraphics` installed and loaded.
+
 ### Executors
 The package implements three different executors, meant for different scenarios:
 - `Serial`, which runs the sampler sequentially, mostly for development and testing purposes
