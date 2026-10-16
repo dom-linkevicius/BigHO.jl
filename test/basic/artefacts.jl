@@ -13,7 +13,7 @@ struct LoggingWrapper{F}
     f::F
     log::Vector{Any}
 end
-BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pre_artefact); w.f(params))
+BigHOPs.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pre_artefact); w.f(params))
 
 @testset "Stateful objectives / artefacts" begin
     @info "Testing Stateful objective artefact threading"
@@ -48,7 +48,7 @@ BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pr
     ho_tuple = Hyperoptimizer(p -> (p.a + p.b, "diagnostic"), (a=Nominal([1]), b=Nominal([2])); n=1)
     @test_logs (:warn, r"non-Real") run!(ho_tuple)
     @test length(results(ho_tuple)) == 0
-    @test ho_tuple.runs[1].status == BigHO.Failed
+    @test ho_tuple.runs[1].status == BigHOPs.Failed
     @test ho_tuple.runs[1].post_artefact === nothing
 
     let n_calls = Ref(0)
@@ -58,5 +58,5 @@ BigHO.call_objective(w::LoggingWrapper, params, pre_artefact) = (push!(w.log, pr
     @test_logs (:warn, r"non-Real") run!(ho_missing)
     @test minimum(ho_missing) == 5.0
     @test length(results(ho_missing)) == 1
-    @test ho_missing.runs[2].status == BigHO.Failed
+    @test ho_missing.runs[2].status == BigHOPs.Failed
 end

@@ -27,11 +27,11 @@
         @test reloaded.status == ho_oneoff.status
 
         ho_partial = Hyperoptimizer(p -> p.a^2, (a=Ordinal(1:10),); n=6)
-        BigHO.ask!(ho_partial)
+        BigHOPs.ask!(ho_partial)
         save_hyperoptimizer(ho_partial, path)
         reloaded_partial = load_hyperoptimizer(p -> p.a^2, path)
         @test reloaded_partial.n_pending == 0
-        @test reloaded_partial.runs[1].status === BigHO.Abandoned
+        @test reloaded_partial.runs[1].status === BigHOPs.Abandoned
     end
 
     mktempdir() do dir
@@ -40,13 +40,13 @@
         ho = Hyperoptimizer(p -> p.a^2, (a=Ordinal(1:20),); n=10)
         run!(ho; executor=Serial(), save_every=3, save_path=path)
         @test length(results(ho)) == 10
-        @test ho.status == BigHO.Finished
+        @test ho.status == BigHOPs.Finished
         @test isfile(path)
         @test !isfile(path * ".tmp")
         @test length(readdir(dir)) == 1
 
         loaded = load_hyperoptimizer(p -> p.a^2, path)
-        @test loaded.status == BigHO.Finished
+        @test loaded.status == BigHOPs.Finished
         @test loaded.n_pending == 0
         @test loaded.n == ho.n
         @test length(loaded.runs) == length(ho.runs) == 10
@@ -64,7 +64,7 @@
         @test isfile(path)
         @test !isfile(path * ".tmp")
         loaded = load_hyperoptimizer(p -> p.a^2, path)
-        @test loaded.status == BigHO.Finished
+        @test loaded.status == BigHOPs.Finished
         @test length(loaded.runs) == 6
         @test [e.value for e in loaded.runs] == [e.value for e in ho.runs]
     end
@@ -81,7 +81,7 @@
         @test loaded.n == 5
         settarget!(loaded, 200)
         run!(loaded)
-        @test loaded.status == BigHO.Finished
+        @test loaded.status == BigHOPs.Finished
         @test length(loaded.runs) == 200
         @test length(results(loaded)) == 200
         @test minimum(loaded) == 0
@@ -101,7 +101,7 @@ end
             run!(ho; executor=Serial(), save_every=1, save_path=path)
 
             loaded = load_hyperoptimizer(Stateful(toy), path)
-            @test loaded.status == BigHO.Finished
+            @test loaded.status == BigHOPs.Finished
             @test length(loaded.runs) == ho.n
             @test loaded.sampler.current_itr[] == ho.sampler.current_itr[]
             @test loaded.sampler.last_bracket[] == ho.sampler.last_bracket[]
@@ -127,8 +127,8 @@ end
         sampler = Hyperband(R=9, η=3, r_min=1)
         ho = Hyperoptimizer(Stateful(toy), (a=Continuous(0, 10),), sampler)
         for _ in 1:5
-            entry = BigHO.ask!(ho)
-            BigHO.tell!(ho, entry, BigHO.call_objective(ho.objective, entry.params, entry.pre_artefact))
+            entry = BigHOPs.ask!(ho)
+            BigHOPs.tell!(ho, entry, BigHOPs.call_objective(ho.objective, entry.params, entry.pre_artefact))
         end
         save_hyperoptimizer(ho, path)
         @test length(ho.sampler.active_brackets) == 1
@@ -138,7 +138,7 @@ end
         @test loaded.sampler.active_brackets[1].rungs[1].ids == collect(1:5)
 
         run!(loaded; executor=Serial())
-        @test loaded.status == BigHO.Finished
+        @test loaded.status == BigHOPs.Finished
         @test length(loaded.runs) == loaded.n
         @test sort([e.id for e in loaded.runs]) == collect(1:loaded.n)
     end
@@ -153,23 +153,23 @@ end
         path = joinpath(dir, "inflight.jld2")
         ho = Hyperoptimizer(Stateful(toy), (a=Continuous(0, 10),), Hyperband(R=9, η=3, r_min=1))
         for _ in 1:9
-            BigHO.ask!(ho)
+            BigHOPs.ask!(ho)
         end
         for i in 1:7
-            BigHO.tell!(ho, ho.runs[i], BigHO.call_objective(ho.objective, ho.runs[i].params, ho.runs[i].pre_artefact))
+            BigHOPs.tell!(ho, ho.runs[i], BigHOPs.call_objective(ho.objective, ho.runs[i].params, ho.runs[i].pre_artefact))
         end
         save_hyperoptimizer(ho, path)
         @test ho.n_pending == 2
-        @test BigHO.blocked(ho.sampler, ho)
+        @test BigHOPs.blocked(ho.sampler, ho)
 
         loaded = @test_logs (:warn, r"still in flight") match_mode = :any load_hyperoptimizer(Stateful(toy), path)
         @test loaded.n_pending == 0
-        @test count(e -> e.status === BigHO.Abandoned, loaded.runs) == 2
-        @test !BigHO.blocked(loaded.sampler, loaded)
+        @test count(e -> e.status === BigHOPs.Abandoned, loaded.runs) == 2
+        @test !BigHOPs.blocked(loaded.sampler, loaded)
 
         run!(loaded; executor=Serial())
-        @test loaded.status == BigHO.Finished
+        @test loaded.status == BigHOPs.Finished
         @test length(loaded.runs) == loaded.n
-        @test count(e -> e.status === BigHO.Abandoned, loaded.runs) == 2
+        @test count(e -> e.status === BigHOPs.Abandoned, loaded.runs) == 2
     end
 end

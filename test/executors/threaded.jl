@@ -1,4 +1,4 @@
-mutable struct BuggySampler <: BigHO.Sampler
+mutable struct BuggySampler <: BigHOPs.Sampler
     n_calls::Int
 end
 BuggySampler() = BuggySampler(0)
@@ -7,11 +7,11 @@ function (s::BuggySampler)(candidates, runs)
     s.n_calls == 3 && error("sampler bug")
     return [(s.n_calls - 0.5) / length(d) for d in candidates]
 end
-BigHO.init(s::BuggySampler, candidates, n) = s
-BigHO.exhausted(::BuggySampler, ho) = false
-BigHO.blocked(::BuggySampler, ho) = false
-BigHO.on_tell!(::BuggySampler, runs, entry) = nothing
-BigHO.create_run_entry(::BuggySampler, ho, id, params, unit) = BigHO.RunEntry(id, params, unit)
+BigHOPs.init(s::BuggySampler, candidates, n) = s
+BigHOPs.exhausted(::BuggySampler, ho) = false
+BigHOPs.blocked(::BuggySampler, ho) = false
+BigHOPs.on_tell!(::BuggySampler, runs, entry) = nothing
+BigHOPs.create_run_entry(::BuggySampler, ho, id, params, unit) = BigHOPs.RunEntry(id, params, unit)
 
 @testset "Threaded executor" begin
     @info "Testing Threaded executor"
@@ -20,41 +20,41 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params, unit) = BigHO.RunEntry(id
     @test_throws ArgumentError Threaded(-1)
 
     ex = Threaded(2)
-    BigHO.start!(ex, nothing)
-    @test BigHO.capacity(ex) == 2
-    entry1 = BigHO.RunEntry(1, (a=1,), Float64[])
-    BigHO.submit!(ex, entry1, p -> p.a)
-    @test BigHO.capacity(ex) == 1
-    entry2 = BigHO.RunEntry(2, (a=2,), Float64[])
-    BigHO.submit!(ex, entry2, p -> p.a)
-    @test BigHO.capacity(ex) == 0
-    out = BigHO.poll(ex)
-    append!(out, BigHO.poll(ex))
+    BigHOPs.start!(ex, nothing)
+    @test BigHOPs.capacity(ex) == 2
+    entry1 = BigHOPs.RunEntry(1, (a=1,), Float64[])
+    BigHOPs.submit!(ex, entry1, p -> p.a)
+    @test BigHOPs.capacity(ex) == 1
+    entry2 = BigHOPs.RunEntry(2, (a=2,), Float64[])
+    BigHOPs.submit!(ex, entry2, p -> p.a)
+    @test BigHOPs.capacity(ex) == 0
+    out = BigHOPs.poll(ex)
+    append!(out, BigHOPs.poll(ex))
     @test length(out) == 2
-    @test BigHO.capacity(ex) == 2
+    @test BigHOPs.capacity(ex) == 2
     @test Set(e.id for (e, _) in out) == Set([1, 2])
-    BigHO.shutdown!(ex)
+    BigHOPs.shutdown!(ex)
 
     ex_batch = Threaded(4)
-    BigHO.start!(ex_batch, nothing)
-    entryA = BigHO.RunEntry(1, (a=1,), Float64[])
-    entryB = BigHO.RunEntry(2, (a=2,), Float64[])
-    entryC = BigHO.RunEntry(3, (a=3,), Float64[])
-    put!(ex_batch.results, (entryA, BigHO.ObjectiveOutcome(10, nothing)))
+    BigHOPs.start!(ex_batch, nothing)
+    entryA = BigHOPs.RunEntry(1, (a=1,), Float64[])
+    entryB = BigHOPs.RunEntry(2, (a=2,), Float64[])
+    entryC = BigHOPs.RunEntry(3, (a=3,), Float64[])
+    put!(ex_batch.results, (entryA, BigHOPs.ObjectiveOutcome(10, nothing)))
     put!(ex_batch.results, (entryB, InterruptException()))
-    put!(ex_batch.results, (entryC, BigHO.ObjectiveOutcome(30, nothing)))
+    put!(ex_batch.results, (entryC, BigHOPs.ObjectiveOutcome(30, nothing)))
     ex_batch.in_flight = 3
-    out_batch = BigHO.poll(ex_batch)
+    out_batch = BigHOPs.poll(ex_batch)
     @test Set(e.id for (e, _) in out_batch) == Set([1, 3])
-    @test BigHO.capacity(ex_batch) == 0
-    @test_throws InterruptException BigHO.poll(ex_batch)
-    BigHO.shutdown!(ex_batch)
+    @test BigHOPs.capacity(ex_batch) == 0
+    @test_throws InterruptException BigHOPs.poll(ex_batch)
+    BigHOPs.shutdown!(ex_batch)
 
     ex_shutdown = Threaded(4)
-    BigHO.start!(ex_shutdown, nothing)
+    BigHOPs.start!(ex_shutdown, nothing)
     finished = Ref(false)
-    BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,), Float64[]), _ -> (sleep(0.3); finished[] = true; 1))
-    BigHO.shutdown!(ex_shutdown)
+    BigHOPs.submit!(ex_shutdown, BigHOPs.RunEntry(1, (a=1,), Float64[]), _ -> (sleep(0.3); finished[] = true; 1))
+    BigHOPs.shutdown!(ex_shutdown)
     @test finished[]
 
     failed_task = @async throw(InterruptException())
@@ -64,14 +64,14 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params, unit) = BigHO.RunEntry(id
     end
     @test istaskfailed(failed_task)
     ex_task_failure = Threaded(1)
-    BigHO.start!(ex_task_failure, nothing)
+    BigHOPs.start!(ex_task_failure, nothing)
     push!(ex_task_failure.tasks, failed_task)
-    @test_throws TaskFailedException BigHO.shutdown!(ex_task_failure)
+    @test_throws TaskFailedException BigHOPs.shutdown!(ex_task_failure)
 
     ho = Hyperoptimizer(p -> p.a^2, (a=Continuous(1, 500),); n=500)
     run!(ho; executor=Threaded(8))
     @test length(ho.runs) == 500
-    @test all(e -> e.status == BigHO.Completed, ho.runs)
+    @test all(e -> e.status == BigHOPs.Completed, ho.runs)
     @test all(e -> e.value == e.params.a^2, ho.runs)
 
     ho_err = Hyperoptimizer(p -> p.a == 2 ? error("boom") : p.a, (a=Nominal([1, 2, 3]),); n=3)
@@ -79,17 +79,17 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params, unit) = BigHO.RunEntry(id
     @test_logs (:warn, r"non-Real") run!(ho_err; executor=ex_err)
     @test length(results(ho_err)) == 2
     @test length(ho_err.runs) == 3
-    @test count(e -> e.status == BigHO.Failed, ho_err.runs) == 1
+    @test count(e -> e.status == BigHOPs.Failed, ho_err.runs) == 1
 
     let n_calls = Ref(0)
         global interrupt_after_first_threaded(p) = (n_calls[] += 1; n_calls[] == 1 ? p.a : throw(InterruptException()))
     end
     ho_interrupt = Hyperoptimizer(interrupt_after_first_threaded, (a=Nominal([1, 2, 3]),); n=3)
     @test_throws InterruptException run!(ho_interrupt; executor=Threaded(1))
-    @test ho_interrupt.status == BigHO.Errored
+    @test ho_interrupt.status == BigHOPs.Errored
     @test length(results(ho_interrupt)) == 1
     @test ho_interrupt.n_pending == 0
-    @test ho_interrupt.runs[2].status == BigHO.Abandoned
+    @test ho_interrupt.runs[2].status == BigHOPs.Abandoned
     @test_throws ArgumentError run!(ho_interrupt)
 
     ho_errored = Hyperoptimizer(p -> p.a == 1 ? 1.0 : (sleep(2.0); 2.0), (a=Nominal([1, 2, 3]),);
@@ -102,15 +102,15 @@ BigHO.create_run_entry(::BuggySampler, ho, id, params, unit) = BigHO.RunEntry(id
     end
     @test run_errored_exception isa ErrorException
     @test run_errored_exception.msg == "sampler bug"
-    @test ho_errored.status == BigHO.Errored
+    @test ho_errored.status == BigHOPs.Errored
     @test ho_errored.n_pending == 0
     @test length(ho_errored.runs) == 2
-    @test count(e -> e.status == BigHO.Completed, ho_errored.runs) == 1
-    @test count(e -> e.status == BigHO.Abandoned, ho_errored.runs) == 1
+    @test count(e -> e.status == BigHOPs.Completed, ho_errored.runs) == 1
+    @test count(e -> e.status == BigHOPs.Abandoned, ho_errored.runs) == 1
     @test_throws ArgumentError run!(ho_errored)
     @test_throws ArgumentError settarget!(ho_errored, 10)
-    @test_throws ArgumentError BigHO.ask!(ho_errored)
-    @test_throws ArgumentError BigHO.tell!(ho_errored, ho_errored.runs[2], 42)
+    @test_throws ArgumentError BigHOPs.ask!(ho_errored)
+    @test_throws ArgumentError BigHOPs.tell!(ho_errored, ho_errored.runs[2], 42)
 
     g(p) = (p.a - 7)^2 + (p.b - 3)^2
     ho_exact = Hyperoptimizer(g, (a=Ordinal(0:10), b=Ordinal(0:10)); n=6000)

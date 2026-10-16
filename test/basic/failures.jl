@@ -11,7 +11,7 @@
     @test length(ho_nan.runs) == 2
     @test length(results(ho_nan)) == 1
     @test !any(isnan, results(ho_nan))
-    @test ho_nan.runs[2].status == BigHO.Failed
+    @test ho_nan.runs[2].status == BigHOPs.Failed
     @test ho_nan.runs[2].value === missing
     @test isnan(ho_nan.runs[2].error)
     @test ho_nan.runs[1].error === nothing
@@ -25,7 +25,7 @@
     @test minimizer(ho_err) == [20, 1]
     @test length(ho_err.runs) == 2
     @test length(results(ho_err)) == 1
-    @test ho_err.runs[2].status == BigHO.Failed
+    @test ho_err.runs[2].status == BigHOPs.Failed
     @test ho_err.runs[2].value === missing
     @test ho_err.runs[2].error isa ErrorException && ho_err.runs[2].error.msg == "boom"
     @test ho_err.runs[1].error === nothing

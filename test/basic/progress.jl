@@ -8,7 +8,7 @@ import ProgressMeter
     ho = Hyperoptimizer(p -> p.a^2, (a=Ordinal(1:20),); n=10)
     run!(ho; executor=Serial())
     @test length(results(ho)) == 10
-    @test ho.status == BigHO.Finished
+    @test ho.status == BigHOPs.Finished
 
     ho2 = Hyperoptimizer(p -> p.a^2, (a=Ordinal(1:20),); n=5)
     run!(ho2; executor=Serial())

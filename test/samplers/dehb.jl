@@ -19,24 +19,24 @@ end
 @testset "DEHBSampler cannot be used on its own" begin
     @info "Testing that a bare DEHBSampler rejects every Sampler entry point"
 
-    de = BigHO.DEHBSampler()
-    @test BigHO.init(de, (a=Nominal([1]),), 5) === de
+    de = BigHOPs.DEHBSampler()
+    @test BigHOPs.init(de, (a=Nominal([1]),), 5) === de
 
-    @test_throws ArgumentError BigHO.on_tell!(de, BigHO.RunEntry[], nothing)
-    @test_throws ArgumentError BigHO.exhausted(de, nothing)
-    @test_throws ArgumentError BigHO.blocked(de, nothing)
-    @test_throws ArgumentError BigHO.create_run_entry(de, nothing, 1, (a=1,), [0.5])
-    @test_throws ArgumentError de((a=Nominal([1]),), BigHO.RunEntry[])
+    @test_throws ArgumentError BigHOPs.on_tell!(de, BigHOPs.RunEntry[], nothing)
+    @test_throws ArgumentError BigHOPs.exhausted(de, nothing)
+    @test_throws ArgumentError BigHOPs.blocked(de, nothing)
+    @test_throws ArgumentError BigHOPs.create_run_entry(de, nothing, 1, (a=1,), [0.5])
+    @test_throws ArgumentError de((a=Nominal([1]),), BigHOPs.RunEntry[])
 
     ho = Hyperoptimizer(p -> p.a, (a=Nominal([1, 2]),), DEHB(R=9, η=3, r_min=1))
-    @test ho.sampler.inner isa BigHO.DEHBSampler
+    @test ho.sampler.inner isa BigHOPs.DEHBSampler
 end
 
 @testset "DEHB subpopulations are keyed by resource" begin
     @info "Testing that DEHB allocates one subpopulation per resource level, sized by that bracket's first rung"
 
     s = DEHB(R=27, η=3, r_min=1)
-    de = BigHO._subpopulations!(s)
+    de = BigHOPs._subpopulations!(s)
 
     @test sort(collect(keys(de.subpops))) == [1, 3, 9, 27]
     @test sort(collect(keys(de.total_dispatched))) == [1, 3, 9, 27]
@@ -44,7 +44,7 @@ end
     @test all(slots -> all(==(0), slots), values(de.subpops))
     @test all(==(0), values(de.total_dispatched))
 
-    @test BigHO._subpopulations!(s) === de
+    @test BigHOPs._subpopulations!(s) === de
     @test length(de.subpops) == 4
 end
 
@@ -52,32 +52,32 @@ end
     @info "Testing that DEHB's target pointer walks a subpopulation and resets at its end"
 
     s = DEHB(R=27, η=3, r_min=1)
-    de = BigHO._subpopulations!(s)
+    de = BigHOPs._subpopulations!(s)
 
-    @test BigHO._next_slot(s, 3) == 1
+    @test BigHOPs._next_slot(s, 3) == 1
     de.total_dispatched[3] = 11
-    @test BigHO._next_slot(s, 3) == 12
+    @test BigHOPs._next_slot(s, 3) == 12
     de.total_dispatched[3] = 12
-    @test BigHO._next_slot(s, 3) == 1
+    @test BigHOPs._next_slot(s, 3) == 1
     de.total_dispatched[3] = 13
-    @test BigHO._next_slot(s, 3) == 2
+    @test BigHOPs._next_slot(s, 3) == 2
 end
 
 @testset "DEHB parent pool comes from the next lower resource" begin
     @info "Testing that DEHB's parent pool is the subpopulation one resource level down, skipping empty slots"
 
     s = DEHB(R=27, η=3, r_min=1)
-    de = BigHO._subpopulations!(s)
-    runs = [BigHO.RunEntry(i, (r=1, a=Float64(i)), [0.1i, 0.2i]) for i in 1:3]
+    de = BigHOPs._subpopulations!(s)
+    runs = [BigHOPs.RunEntry(i, (r=1, a=Float64(i)), [0.1i, 0.2i]) for i in 1:3]
 
     de.subpops[1][1] = 1
     de.subpops[1][5] = 3
     de.subpops[9][2] = 2
 
-    @test BigHO._parent_pool(s, runs, 3) == [runs[1].unit_params, runs[3].unit_params]
-    @test BigHO._parent_pool(s, runs, 27) == [runs[2].unit_params]
+    @test BigHOPs._parent_pool(s, runs, 3) == [runs[1].unit_params, runs[3].unit_params]
+    @test BigHOPs._parent_pool(s, runs, 27) == [runs[2].unit_params]
 
-    pool = BigHO._global_pool(s, runs)
+    pool = BigHOPs._global_pool(s, runs)
     @test length(pool) == 3
     @test sort(pool) == sort([runs[i].unit_params for i in 1:3])
 end
@@ -88,24 +88,24 @@ end
     target = [0.5, 0.5, 0.5, 0.5]
     parents = [[0.1, 0.2, 0.3, 0.4], [0.9, 0.8, 0.7, 0.6], [0.15, 0.25, 0.35, 0.45]]
 
-    no_cross = BigHO.DEHBSampler(; F=0.5, crossover=0.0, rng=StableRNG(7))
+    no_cross = BigHOPs.DEHBSampler(; F=0.5, crossover=0.0, rng=StableRNG(7))
     for _ in 1:20
-        trial = BigHO._de_trial(no_cross, target, copy(parents))
+        trial = BigHOPs._de_trial(no_cross, target, copy(parents))
         @test length(trial) == length(target)
         @test all(0 .<= trial .<= 1)
         @test count(trial .!= target) == 1
     end
 
-    all_cross = BigHO.DEHBSampler(; F=0.5, crossover=1.0, rng=StableRNG(7))
+    all_cross = BigHOPs.DEHBSampler(; F=0.5, crossover=1.0, rng=StableRNG(7))
     for _ in 1:20
-        trial = BigHO._de_trial(all_cross, target, copy(parents))
+        trial = BigHOPs._de_trial(all_cross, target, copy(parents))
         @test all(0 .<= trial .<= 1)
         @test count(trial .!= target) == length(target)
     end
 
-    wide = BigHO.DEHBSampler(; F=1.0, crossover=1.0, rng=StableRNG(3))
+    wide = BigHOPs.DEHBSampler(; F=1.0, crossover=1.0, rng=StableRNG(3))
     for _ in 1:50
-        @test all(0 .<= BigHO._de_trial(wide, [0.99, 0.01], [[0.99, 0.01], [0.01, 0.99], [0.5, 0.5]]) .<= 1)
+        @test all(0 .<= BigHOPs._de_trial(wide, [0.99, 0.01], [[0.99, 0.01], [0.01, 0.99], [0.5, 0.5]]) .<= 1)
     end
 end
 
@@ -129,10 +129,10 @@ end
     ho = Hyperoptimizer(toy, (a=Continuous(0, 10), b=Continuous(0, 5)), s)
     run!(ho; show_progress=false)
 
-    @test ho.n == BigHO._total_trials(27, 1, 3)
+    @test ho.n == BigHOPs._total_trials(27, 1, 3)
     @test length(ho.runs) == ho.n
     @test length(ho.completed) == ho.n
-    @test ho.status == BigHO.Finished
+    @test ho.status == BigHOPs.Finished
 
     @test :r ∉ ho.params
     @test all(e -> e.params.r in (1, 3, 9, 27), ho.runs)
@@ -146,7 +146,7 @@ end
     end
 
     @test_throws ArgumentError settarget!(ho, ho.n + 10)
-    @test ho.sampler isa BigHO.FixedPlanSampler
+    @test ho.sampler isa BigHOPs.FixedPlanSampler
 end
 
 @testset "DEHB keeps the best trial in each subpopulation slot" begin
@@ -162,12 +162,12 @@ end
     for (r, slots) in de.subpops, (slot, id) in enumerate(slots)
         id == 0 && continue
         entry = ho.runs[id]
-        @test entry.status == BigHO.Completed
+        @test entry.status == BigHOPs.Completed
         @test entry.params.r == r
         @test entry.metadata[:slot] == slot
 
         rivals = [e for e in ho.runs
-                  if e.status == BigHO.Completed && e.params.r == r && e.metadata[:slot] == slot]
+                  if e.status == BigHOPs.Completed && e.params.r == r && e.metadata[:slot] == slot]
         @test entry.value == minimum(e.value for e in rivals)
         n_checked += 1
     end
@@ -224,14 +224,14 @@ end
     @info "Testing that DEHB replays the bracket schedule and stops copying after the first iteration"
 
     toy(p) = (p.a - 3.0)^2 + 1.0 / p.r
-    one_pass = BigHO._total_trials(9, 1, 3)
+    one_pass = BigHOPs._total_trials(9, 1, 3)
 
     ho = Hyperoptimizer(toy, (a=Continuous(0, 10),), DEHB(R=9, η=3, r_min=1, iterations=3))
     run!(ho; show_progress=false)
 
     @test ho.n == 3 * one_pass
     @test length(ho.runs) == ho.n
-    @test ho.status == BigHO.Finished
+    @test ho.status == BigHOPs.Finished
 
     shapes = [sort([(e.metadata[:bracket], e.metadata[:rung])
                     for e in ho.runs if e.metadata[:iteration] == t]) for t in 1:3]
@@ -252,7 +252,7 @@ end
     @test length(ho.runs) == ho.n
     @test length(ho.completed) == ho.n
     @test ho.n_pending == 0
-    @test ho.status == BigHO.Finished
+    @test ho.status == BigHOPs.Finished
     @test sort([e.id for e in ho.runs]) == collect(1:ho.n)
 
     de = ho.sampler.inner

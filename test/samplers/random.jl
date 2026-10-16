@@ -25,7 +25,7 @@
     @test_throws ArgumentError settarget!(hor, 50)
 
     ho_pending = Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),); n=3)
-    BigHO.ask!(ho_pending)
+    BigHOPs.ask!(ho_pending)
     @test_logs (:warn, r"pending") (:info, r"target set to 5") settarget!(ho_pending, 5)
 
     ho3 = Hyperoptimizer(p -> p.a * p.b, (a=Nominal([20]), b=Nominal([10])); n=1)
@@ -43,8 +43,8 @@ end
 @testset "RandomSampler interface" begin
     @info "Testing RandomSampler's exhausted/blocked always return false"
     ho = Hyperoptimizer(p -> p.a, (a=Nominal([1, 2, 3]),); n=3)
-    @test !BigHO.exhausted(ho.sampler, ho)
-    @test !BigHO.blocked(ho.sampler, ho)
+    @test !BigHOPs.exhausted(ho.sampler, ho)
+    @test !BigHOPs.blocked(ho.sampler, ho)
 end
 
 @testset "Categorical" begin

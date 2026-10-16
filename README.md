@@ -1,16 +1,16 @@
-# BigHO
+# BigHOPs
 
-[![codecov](https://codecov.io/gh/dom-linkevicius/BigHO.jl/graph/badge.svg)](https://codecov.io/gh/dom-linkevicius/BigHO.jl)
+[![codecov](https://codecov.io/gh/dom-linkevicius/BigHOPs.jl/graph/badge.svg)](https://codecov.io/gh/dom-linkevicius/BigHOPs.jl)
 
 ## Introduction
 
-BigHO.jl is a hyperparameter optimization library meant to be used in situations where individual function evaluations are costly. The package implements executors (which control how individual functions are evaluated) and samplers (which control how the hyperparameters are chosen), allowing for different composition of executors and samplers, depending on the optimization problem and available resources. The package is still under development and some of the features or implementations may change.
+BigHOPs.jl is a hyperparameter optimization library meant to be used in situations where individual function evaluations are costly. The package implements executors (which control how individual functions are evaluated) and samplers (which control how the hyperparameters are chosen), allowing for different composition of executors and samplers, depending on the optimization problem and available resources. The package is still under development and some of the features or implementations may change.
 
 ### Installation
 
 ```julia
 using Pkg
-Pkg.add("BigHO")
+Pkg.add("BigHOPs")
 ```
 
 Plotting lives in an extension, so `summaryplot` additionally needs `CairoMakie` and `AlgebraOfGraphics` installed and loaded.
@@ -31,7 +31,7 @@ The package currently implements the following samplers:
 
 ## Convenience functionality
 
-BigHO.jl provides some convenience functionality, such as
+BigHOPs.jl provides some convenience functionality, such as
 - tracking the status of individual trials, such that individual trial failures would not crash the whole optimization run, but should provide enough information to diagnose and reproduce them
 - saving results after each `k` trials in a user specified directory, such that after unexpected crashes and failures it would be possible to easily resume an optimization run
 - conversion of hyperparameter optimization results into a `DataFrames.DataFrame` for easier downstream analysis
@@ -41,7 +41,7 @@ BigHO.jl provides some convenience functionality, such as
 ## Sample code
 
 ```julia
-using BigHO
+using BigHOPs
 using DataFrames: DataFrame
 using Random
 
@@ -51,7 +51,7 @@ using Random
 # a higher `p.r` only pays for the *extra* samples, continuing from `pre_artefact` instead of
 # restarting from scratch.
 function noisy_bowl(p; pre_artefact=nothing)
-    p.x > 4.5 && error("simulated failure for x > 4.5 -- BigHO marks this a Failed trial and keeps going")
+    p.x > 4.5 && error("simulated failure for x > 4.5 -- BigHOPs marks this a Failed trial and keeps going")
     n_done, total = pre_artefact === nothing ? (0, 0.0) : pre_artefact
     centre = p.kernel == "rbf" ? 3.0 : -1.0
     loss = p.act(p.x - centre)^2 + (log10(p.lr) + 2.5)^2 + (p.degree - 3)^2
@@ -132,5 +132,5 @@ You can find the benchmarking code in [`benchmarks/`](benchmarks/).
 
 ## Provenance
 
-- BigHO.jl started as a fork of, and was inspired by, [Hyperopt.jl](https://github.com/baggepinnen/Hyperopt.jl), but has since been rewritten essentially from the ground up to address some of the perceived limitations of that package.
+- BigHOPs.jl started as a fork of, and was inspired by, [Hyperopt.jl](https://github.com/baggepinnen/Hyperopt.jl), but has since been rewritten essentially from the ground up to address some of the perceived limitations of that package.
 - This package was written with significant assistance of Claude Code.

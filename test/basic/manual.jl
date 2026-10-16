@@ -4,14 +4,14 @@
     ho = Hyperoptimizer(nothing, (a=Continuous(1, 2), b=Nominal([true, false]), c=Nominal(randn(100))); n=10)
     show(devnull, ho)
     for _ in 1:10
-        entry = BigHO.ask!(ho)
+        entry = BigHOPs.ask!(ho)
         println(entry.id, "\t", entry.params)
     end
     @test length(ho.runs) == 10
     show(devnull, ho)
 
     ho2 = Hyperoptimizer(nothing, (a=Continuous(1, 2), b=Nominal([true, false]), c=Nominal(randn(100))); n=10)
-    entries = [BigHO.ask!(ho2) for _ in 1:10]
+    entries = [BigHOPs.ask!(ho2) for _ in 1:10]
     @test length(entries) == 10
     @test length(ho2.runs) == 10
     @test all(e -> 1.0 <= e.params.a <= 2.0 && e.params.b isa Bool, entries)
@@ -21,7 +21,7 @@
     @test_throws ErrorException minimizer(ho2)
 
     ho3 = Hyperoptimizer(nothing, (a=Nominal([1, 2, 3]),); n=2)
-    BigHO.ask!(ho3)
-    BigHO.ask!(ho3)
-    @test_throws ArgumentError BigHO.ask!(ho3)
+    BigHOPs.ask!(ho3)
+    BigHOPs.ask!(ho3)
+    @test_throws ArgumentError BigHOPs.ask!(ho3)
 end

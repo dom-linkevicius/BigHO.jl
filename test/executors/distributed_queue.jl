@@ -1,4 +1,4 @@
-mutable struct SequentialSampler <: BigHO.Sampler
+mutable struct SequentialSampler <: BigHOPs.Sampler
     n_calls::Int
 end
 SequentialSampler() = SequentialSampler(0)
@@ -6,11 +6,11 @@ function (s::SequentialSampler)(candidates, runs)
     s.n_calls += 1
     return [(s.n_calls - 0.5) / length(d) for d in candidates]
 end
-BigHO.init(s::SequentialSampler, candidates, n) = s
-BigHO.exhausted(::SequentialSampler, ho) = false
-BigHO.blocked(::SequentialSampler, ho) = false
-BigHO.on_tell!(::SequentialSampler, runs, entry) = nothing
-BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEntry(id, params, unit)
+BigHOPs.init(s::SequentialSampler, candidates, n) = s
+BigHOPs.exhausted(::SequentialSampler, ho) = false
+BigHOPs.blocked(::SequentialSampler, ho) = false
+BigHOPs.on_tell!(::SequentialSampler, runs, entry) = nothing
+BigHOPs.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHOPs.RunEntry(id, params, unit)
 
 @testset "DistributedQueue executor" begin
     @info "Testing DistributedQueue executor"
@@ -28,48 +28,48 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
     test_spawn_worker() = first(addprocs(1))
     function test_setup_worker(pid)
         Distributed.remotecall_eval(Main, [pid], :(begin
-            using BigHO
+            using BigHOPs
             dq_square(p) = p.a^2
             dq_slow(p) = (sleep(0.5); p.a^2)
         end))
         return nothing
     end
-    @everywhere using BigHO
+    @everywhere using BigHOPs
     @everywhere dq_square(p) = p.a^2
     @everywhere dq_slow(p) = (sleep(0.5); p.a^2)
 
     max_concurrency = 3
     try
         ex = DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
-        BigHO.start!(ex, nothing)
-        @test BigHO.capacity(ex) == max_concurrency
-        entry1 = BigHO.RunEntry(1, (a=1,), Float64[])
-        BigHO.submit!(ex, entry1, dq_square)
-        @test BigHO.capacity(ex) == max_concurrency - 1
-        entry2 = BigHO.RunEntry(2, (a=2,), Float64[])
-        BigHO.submit!(ex, entry2, dq_square)
-        @test BigHO.capacity(ex) == max_concurrency - 2
-        out = BigHO.poll(ex)
-        append!(out, BigHO.poll(ex))
+        BigHOPs.start!(ex, nothing)
+        @test BigHOPs.capacity(ex) == max_concurrency
+        entry1 = BigHOPs.RunEntry(1, (a=1,), Float64[])
+        BigHOPs.submit!(ex, entry1, dq_square)
+        @test BigHOPs.capacity(ex) == max_concurrency - 1
+        entry2 = BigHOPs.RunEntry(2, (a=2,), Float64[])
+        BigHOPs.submit!(ex, entry2, dq_square)
+        @test BigHOPs.capacity(ex) == max_concurrency - 2
+        out = BigHOPs.poll(ex)
+        append!(out, BigHOPs.poll(ex))
         @test length(out) == 2
-        @test BigHO.capacity(ex) == max_concurrency
+        @test BigHOPs.capacity(ex) == max_concurrency
         @test Set(e.id for (e, _) in out) == Set([1, 2])
-        BigHO.shutdown!(ex)
+        BigHOPs.shutdown!(ex)
 
         ex_batch = DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
-        BigHO.start!(ex_batch, nothing)
-        entryA = BigHO.RunEntry(1, (a=1,), Float64[])
-        entryB = BigHO.RunEntry(2, (a=2,), Float64[])
-        entryC = BigHO.RunEntry(3, (a=3,), Float64[])
-        put!(ex_batch.results, (entryA, BigHO.ObjectiveOutcome(10, nothing)))
+        BigHOPs.start!(ex_batch, nothing)
+        entryA = BigHOPs.RunEntry(1, (a=1,), Float64[])
+        entryB = BigHOPs.RunEntry(2, (a=2,), Float64[])
+        entryC = BigHOPs.RunEntry(3, (a=3,), Float64[])
+        put!(ex_batch.results, (entryA, BigHOPs.ObjectiveOutcome(10, nothing)))
         put!(ex_batch.results, (entryB, InterruptException()))
-        put!(ex_batch.results, (entryC, BigHO.ObjectiveOutcome(30, nothing)))
+        put!(ex_batch.results, (entryC, BigHOPs.ObjectiveOutcome(30, nothing)))
         ex_batch.in_flight = 3
-        out_batch = BigHO.poll(ex_batch)
+        out_batch = BigHOPs.poll(ex_batch)
         @test Set(e.id for (e, _) in out_batch) == Set([1, 3])
-        @test BigHO.capacity(ex_batch) == 0
-        @test_throws InterruptException BigHO.poll(ex_batch)
-        BigHO.shutdown!(ex_batch)
+        @test BigHOPs.capacity(ex_batch) == 0
+        @test_throws InterruptException BigHOPs.poll(ex_batch)
+        BigHOPs.shutdown!(ex_batch)
 
         shutdown_spawned = Int[]
         function shutdown_spawn_worker()
@@ -77,15 +77,15 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
             push!(shutdown_spawned, pid)
             return pid
         end
-        shutdown_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
+        shutdown_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHOPs))
         ex_shutdown = DistributedQueue(2; spawn_worker=shutdown_spawn_worker, setup_worker=shutdown_setup_worker)
-        BigHO.start!(ex_shutdown, nothing)
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(1, (a=1,), Float64[]), p -> p.a^2)
-        BigHO.submit!(ex_shutdown, BigHO.RunEntry(2, (a=2,), Float64[]), p -> (sleep(30.0); p.a^2))
+        BigHOPs.start!(ex_shutdown, nothing)
+        BigHOPs.submit!(ex_shutdown, BigHOPs.RunEntry(1, (a=1,), Float64[]), p -> p.a^2)
+        BigHOPs.submit!(ex_shutdown, BigHOPs.RunEntry(2, (a=2,), Float64[]), p -> (sleep(30.0); p.a^2))
         sleep(5.0)
-        elapsed = @elapsed BigHO.shutdown!(ex_shutdown)
+        elapsed = @elapsed BigHOPs.shutdown!(ex_shutdown)
         @test elapsed < 10.0
-        out_shutdown = BigHO.poll(ex_shutdown)
+        out_shutdown = BigHOPs.poll(ex_shutdown)
         out_shutdown_by_id = Dict(e.id => outcome for (e, outcome) in out_shutdown)
         @test out_shutdown_by_id[1].value == 1
         @test out_shutdown_by_id[2] isa Exception
@@ -93,7 +93,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         @test isempty(intersect(shutdown_spawned, workers()))
 
         ex_task_failure = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
-        BigHO.start!(ex_task_failure, nothing)
+        BigHOPs.start!(ex_task_failure, nothing)
         failed_task = @async throw(InterruptException())
         try
             wait(failed_task)
@@ -101,7 +101,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         end
         @test istaskfailed(failed_task)
         push!(ex_task_failure.tasks, (0, failed_task))
-        @test_throws TaskFailedException BigHO.shutdown!(ex_task_failure)
+        @test_throws TaskFailedException BigHOPs.shutdown!(ex_task_failure)
 
         setup_done = Ref(false)
         function interrupt_setup_worker(pid)
@@ -109,8 +109,8 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
             setup_done[] = true
         end
         ex_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=interrupt_setup_worker)
-        BigHO.start!(ex_interrupt, nothing)
-        BigHO.submit!(ex_interrupt, BigHO.RunEntry(1, (a=1,), Float64[]), dq_slow)
+        BigHOPs.start!(ex_interrupt, nothing)
+        BigHOPs.submit!(ex_interrupt, BigHOPs.RunEntry(1, (a=1,), Float64[]), dq_slow)
         let waited = 0.0
             while !setup_done[] && waited < 60.0
                 sleep(0.1)
@@ -120,22 +120,22 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         @test setup_done[]
         sleep(0.1)
         schedule(ex_interrupt.tasks[1][2], InterruptException(); error=true)
-        @test isempty(BigHO.poll(ex_interrupt))
-        @test_throws InterruptException BigHO.poll(ex_interrupt)
-        BigHO.shutdown!(ex_interrupt)
+        @test isempty(BigHOPs.poll(ex_interrupt))
+        @test_throws InterruptException BigHOPs.poll(ex_interrupt)
+        BigHOPs.shutdown!(ex_interrupt)
 
         ex_objective_interrupt = DistributedQueue(1; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker)
-        BigHO.start!(ex_objective_interrupt, nothing)
-        BigHO.submit!(ex_objective_interrupt, BigHO.RunEntry(1, (a=1,), Float64[]), p -> throw(InterruptException()))
-        out_objective_interrupt = BigHO.poll(ex_objective_interrupt)
+        BigHOPs.start!(ex_objective_interrupt, nothing)
+        BigHOPs.submit!(ex_objective_interrupt, BigHOPs.RunEntry(1, (a=1,), Float64[]), p -> throw(InterruptException()))
+        out_objective_interrupt = BigHOPs.poll(ex_objective_interrupt)
         @test length(out_objective_interrupt) == 1
         @test out_objective_interrupt[1][2] isa Exception
-        BigHO.shutdown!(ex_objective_interrupt)
+        BigHOPs.shutdown!(ex_objective_interrupt)
 
         ho = Hyperoptimizer(dq_square, (a=Ordinal(1:5),); n=20)
         run!(ho; executor=DistributedQueue(max_concurrency; spawn_worker=test_spawn_worker, setup_worker=test_setup_worker))
         @test length(results(ho)) == 20
-        @test all(e -> e.status == BigHO.Completed, ho.runs)
+        @test all(e -> e.status == BigHOPs.Completed, ho.runs)
         @test minimum(ho) == 1
 
         n_death_trials = 4
@@ -146,17 +146,17 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
             push!(death_spawned, pid)
             return pid
         end
-        death_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
+        death_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHOPs))
         dq_death_or_square = p -> p.a == dying_id ? exit() : p.a^2
         ex_death = DistributedQueue(n_death_trials; spawn_worker=death_spawn_worker, setup_worker=death_setup_worker)
-        BigHO.start!(ex_death, nothing)
+        BigHOPs.start!(ex_death, nothing)
         for i in 1:n_death_trials
-            BigHO.submit!(ex_death, BigHO.RunEntry(i, (a=i,), Float64[]), dq_death_or_square)
+            BigHOPs.submit!(ex_death, BigHOPs.RunEntry(i, (a=i,), Float64[]), dq_death_or_square)
         end
-        collected = Tuple{BigHO.RunEntry,Any}[]
+        collected = Tuple{BigHOPs.RunEntry,Any}[]
         collect_task = @async begin
             while length(collected) < n_death_trials
-                append!(collected, BigHO.poll(ex_death))
+                append!(collected, BigHOPs.poll(ex_death))
             end
         end
         let waited = 0.0
@@ -175,7 +175,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
             i == dying_id && continue
             @test outcome_by_id[i].value == i^2
         end
-        BigHO.shutdown!(ex_death)
+        BigHOPs.shutdown!(ex_death)
 
         interrupt_others_spawned = Int[]
         function interrupt_others_spawn_worker()
@@ -183,7 +183,7 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
             push!(interrupt_others_spawned, pid)
             return pid
         end
-        interrupt_others_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHO))
+        interrupt_others_setup_worker(pid) = Distributed.remotecall_eval(Main, [pid], :(using BigHOPs))
         dq_interrupt_others = p -> (sleep(30.0); p.a^2)
         ex_interrupt_others = DistributedQueue(3; spawn_worker=interrupt_others_spawn_worker, setup_worker=interrupt_others_setup_worker)
         ho_dq_interrupt = Hyperoptimizer(dq_interrupt_others, (a=Nominal([1, 2, 3]),);
@@ -205,10 +205,10 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         end
         @test caught isa TaskFailedException
         @test caught.task.result isa InterruptException
-        @test ho_dq_interrupt.status == BigHO.Errored
+        @test ho_dq_interrupt.status == BigHOPs.Errored
         @test ho_dq_interrupt.n_pending == 0
         @test length(ho_dq_interrupt.runs) == 3
-        @test count(e -> e.status == BigHO.Abandoned, ho_dq_interrupt.runs) == 3
+        @test count(e -> e.status == BigHOPs.Abandoned, ho_dq_interrupt.runs) == 3
         @test length(interrupt_others_spawned) == 3
         @test isempty(intersect(interrupt_others_spawned, workers()))
 
@@ -220,12 +220,12 @@ BigHO.create_run_entry(::SequentialSampler, ho, id, params, unit) = BigHO.RunEnt
         end
         spawn_fail_setup_worker(pid) = error("simulated cluster/remotecall_eval setup failure")
         ex_spawn_fail = DistributedQueue(1; spawn_worker=spawn_fail_spawn_worker, setup_worker=spawn_fail_setup_worker)
-        BigHO.start!(ex_spawn_fail, nothing)
-        BigHO.submit!(ex_spawn_fail, BigHO.RunEntry(1, (a=1,), Float64[]), dq_square)
-        out_spawn_fail = BigHO.poll(ex_spawn_fail)
+        BigHOPs.start!(ex_spawn_fail, nothing)
+        BigHOPs.submit!(ex_spawn_fail, BigHOPs.RunEntry(1, (a=1,), Float64[]), dq_square)
+        out_spawn_fail = BigHOPs.poll(ex_spawn_fail)
         @test length(out_spawn_fail) == 1
         @test out_spawn_fail[1][2] isa Exception
-        BigHO.shutdown!(ex_spawn_fail)
+        BigHOPs.shutdown!(ex_spawn_fail)
         @test length(spawn_fail_spawned) == 1
         @test isempty(intersect(spawn_fail_spawned, workers()))
     finally
